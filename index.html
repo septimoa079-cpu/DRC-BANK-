@@ -133,6 +133,75 @@
             }
         };
 
+        // ========== Transfer helpers (Firestore) ==========
+        // Create pending transfer record in Firestore
+        window.fbCreatePendingTransfer = async (transferData) => {
+            try {
+                const id = transferData.id || ('txn_' + Date.now() + '_' + Math.random().toString(36).substr(2,9));
+                const docRef = doc(db, 'pendingTransfers', id);
+                await setDoc(docRef, {
+                    id: id,
+                    from: transferData.from,
+                    amount: Number(transferData.amount),
+                    ts: Number(transferData.ts) || Date.now(),
+                    used: false
+                });
+                console.log('Firebase: Pending transfer created', id);
+                return { ...transferData, id };
+            } catch (e) {
+                console.error('Firebase create pending transfer error:', e);
+                throw e;
+            }
+        };
+
+        // Get pending transfer by id
+        window.fbGetPendingTransferById = async (id) => {
+            try {
+                const docRef = doc(db, 'pendingTransfers', id);
+                const snap = await getDoc(docRef);
+                if (!snap.exists()) return null;
+                return snap.data();
+            } catch (e) {
+                console.error('Firebase get pending transfer error:', e);
+                return null;
+            }
+        };
+
+        // Find pending transfer by matching fields (from, amount, ts within tolerance)
+        window.fbFindPendingTransfer = async ({ from, amount, ts, tolerance = 60000 }) => {
+            try {
+                const colRef = collection(db, 'pendingTransfers');
+                const snaps = await getDocs(colRef);
+                let found = null;
+                snaps.forEach(d => {
+                    const t = d.data();
+                    try {
+                        if (t.from === from && Number(t.amount) === Number(amount)) {
+                            const tsDiff = Math.abs((Number(t.ts) || 0) - (Number(ts) || 0));
+                            if (tsDiff <= tolerance) found = t;
+                        }
+                    } catch (e) { /* ignore malformed */ }
+                });
+                return found;
+            } catch (e) {
+                console.error('Firebase find pending transfer error:', e);
+                return null;
+            }
+        };
+
+        // Mark pending transfer used
+        window.fbMarkPendingTransferUsed = async (id) => {
+            try {
+                const docRef = doc(db, 'pendingTransfers', id);
+                await updateDoc(docRef, { used: true });
+                console.log('Firebase: Pending transfer marked used', id);
+                return true;
+            } catch (e) {
+                console.error('Firebase mark pending used error:', e);
+                throw e;
+            }
+        };
+
         console.log('Firebase SDK initialized successfully');
     </script>
     <style>
@@ -588,7 +657,10 @@
             </div>
             <h1>💰 Banco DRC</h1>
             <div class="saldo">Tu saldo: <strong id="userBalance">$0.00</strong></div>
-            <div style="margin-top: 5px; font-size: 12px;" id="userName"></div>
+            <div style="margin-top: 5px; font-size: 12px; display:flex; gap:8px; align-items:center;">
+                <div id="userName"></div>
+                <div id="firebaseStatus" style="font-size:11px; color:#fff; background:rgba(0,0,0,0.15); padding:4px 8px; border-radius:8px;">Modo: local</div>
+            </div>
         </div>
 
         <!-- Modal de Login Inicial -->
@@ -803,6 +875,8 @@
         // ==================== INICIALIZACIÓN ====================
         window.addEventListener('load', () => {
             initializeApp();
+            // Setup Firebase status listener (updates UI badge)
+            try { setupFirebaseStatusListener(); } catch(e) {}
             // Verificar cambios cada 2 segundos
             setInterval(syncLocalStorage, 2000);
         });
@@ -1302,6 +1376,34 @@
             }, 3000);
         }
 
+        // ========== Firebase UI helpers ==========
+        function updateFirebaseStatusUI(connected, info) {
+            try {
+                const el = document.getElementById('firebaseStatus');
+                if (!el) return;
+                if (connected) {
+                    el.textContent = `Firebase: conectado`;
+                    el.style.background = 'rgba(0,0,0,0.15)';
+                    el.style.color = '#fff';
+                } else {
+                    el.textContent = `Modo: local`;
+                    el.style.background = 'rgba(0,0,0,0.12)';
+                    el.style.color = '#fff';
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        function setupFirebaseStatusListener() {
+            // If fbOnAuthStateChanged exists, use it to update UI
+            if (window.fbOnAuthStateChanged) {
+                window.fbOnAuthStateChanged((fbUser) => {
+                    updateFirebaseStatusUI(!!fbUser, fbUser ? fbUser.uid : null);
+                });
+            } else {
+                updateFirebaseStatusUI(false);
+            }
+        }
+
         function showNotification(message) {
             document.getElementById('notificationMessage').textContent = message;
             document.getElementById('jobNotificationModal').classList.add('active');
@@ -1716,6 +1818,14 @@
                 return;
             }
 
+            // Si Firebase está disponible pero no hay usuario autenticado, advertir al usuario
+            try {
+                if (window.firebaseAuth && !window.firebaseAuth.currentUser) {
+                    const ok = confirm('No estás autenticado en Firebase. La transferencia sólo quedará local y no se sincronizará entre dispositivos. ¿Deseas continuar?');
+                    if (!ok) return;
+                }
+            } catch (e) { /* ignore */ }
+
             const amount = parseFloat(document.getElementById('transferAmount').value);
             if (!amount || amount <= 0 || amount > currentUser.balance) {
                 showAlert('Ingresa un monto válido y que no exceda tu saldo', 'error');
@@ -1741,6 +1851,23 @@
             const pendingTransfers = JSON.parse(localStorage.getItem('pendingTransfers') || '[]');
             pendingTransfers.push(transferData);
             localStorage.setItem('pendingTransfers', JSON.stringify(pendingTransfers));
+
+            // Si Firebase está disponible, crear registro en Firestore también
+            if (window.fbCreatePendingTransfer) {
+                try {
+                    const saved = await window.fbCreatePendingTransfer(transferData);
+                    // actualizar id local si firebase generó uno distinto
+                    if (saved && saved.id && saved.id !== transferData.id) {
+                        transferData.id = saved.id;
+                        // actualizar en localStorage
+                        const updated = JSON.parse(localStorage.getItem('pendingTransfers') || '[]');
+                        const idx = updated.findIndex(t => t.ts === transferData.ts && Number(t.amount) === Number(transferData.amount) && t.from === transferData.from);
+                        if (idx !== -1) { updated[idx].id = saved.id; localStorage.setItem('pendingTransfers', JSON.stringify(updated)); }
+                    }
+                } catch (e) {
+                    console.warn('No se pudo guardar transferencia en Firebase:', e);
+                }
+            }
 
             // Limpiar QR anterior
             document.getElementById('qrcode').innerHTML = '';
@@ -1984,22 +2111,68 @@
                 });
             }
 
-            if (transferIndex === -1) {
+            // Si no lo encontramos localmente, intentar buscar en Firestore
+            let fsTransfer = null;
+            if (transferIndex === -1 && window.fbGetPendingTransferById) {
+                try {
+                    if (pendingTransfer.id) {
+                        fsTransfer = await window.fbGetPendingTransferById(pendingTransfer.id);
+                    }
+                    // Si no se encontró por id, intentar buscar por from+amount+ts aproximado usando helper
+                    if (!fsTransfer && window.fbFindPendingTransfer) {
+                        try {
+                            fsTransfer = await window.fbFindPendingTransfer({ from: pendingTransfer.from, amount: pendingTransfer.amount, ts: pendingTransfer.ts, tolerance: 60000 });
+                        } catch (e) {
+                            console.warn('Error buscando transferencia en Firebase (helper):', e);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Error consultando transferencia en Firebase:', e);
+                }
+            }
+
+            if (transferIndex === -1 && !fsTransfer) {
                 // En lugar de fallar inmediatamente, ofrecer forzar aceptación
                 document.getElementById('confirmModal').classList.remove('active');
                 showForceAccept(pendingTransfer);
                 return;
             }
 
-            if (pendingTransfers[transferIndex].used) {
-                showAlert('Este QR ya fue utilizado', 'error');
-                document.getElementById('confirmModal').classList.remove('active');
-                return;
-            }
+            const isLocal = transferIndex !== -1;
 
-            // Marcar como usado
-            pendingTransfers[transferIndex].used = true;
-            localStorage.setItem('pendingTransfers', JSON.stringify(pendingTransfers));
+            if (isLocal) {
+                if (pendingTransfers[transferIndex].used) {
+                    showAlert('Este QR ya fue utilizado', 'error');
+                    document.getElementById('confirmModal').classList.remove('active');
+                    return;
+                }
+
+                // Marcar como usado localmente
+                pendingTransfers[transferIndex].used = true;
+                localStorage.setItem('pendingTransfers', JSON.stringify(pendingTransfers));
+            } else if (fsTransfer) {
+                if (fsTransfer.used) {
+                    showAlert('Este QR ya fue utilizado', 'error');
+                    document.getElementById('confirmModal').classList.remove('active');
+                    return;
+                }
+
+                // Marcar como usado en Firestore
+                if (fsTransfer.id && window.fbMarkPendingTransferUsed) {
+                    try {
+                        await window.fbMarkPendingTransferUsed(fsTransfer.id);
+                    } catch (e) {
+                        console.warn('No se pudo marcar transfer usada en Firebase:', e);
+                    }
+                }
+
+                // También crear un registro local marcado como usado para evitar reuso en este dispositivo
+                try {
+                    const record = { ...pendingTransfer, id: fsTransfer.id || pendingTransfer.id, used: true };
+                    pendingTransfers.push(record);
+                    localStorage.setItem('pendingTransfers', JSON.stringify(pendingTransfers));
+                } catch (e) { /* ignore */ }
+            }
 
             // Ya se dedujo del emisor cuando se generó el QR
             // Solo agregar al receptor ahora
@@ -2075,6 +2248,15 @@
                 const record = { ...pendingTransfer, id: txId, used: true };
                 pendingTransfers.push(record);
                 localStorage.setItem('pendingTransfers', JSON.stringify(pendingTransfers));
+
+                // If Firebase available, also create a used record there
+                if (window.fbCreatePendingTransfer) {
+                    try {
+                        await window.fbCreatePendingTransfer({ ...record, used: true });
+                    } catch (e) {
+                        console.warn('No se pudo crear registro forzado en Firebase:', e);
+                    }
+                }
 
                 // Creditamos al receptor
                 currentUser.balance += amount;
