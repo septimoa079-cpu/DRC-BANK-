@@ -6,156 +6,134 @@
     <title>Banco DRC - Wallet Local</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-    <!-- Firebase REST API helpers -->
-    <script>
-        const FIREBASE_PROJECT = "drc-bank-d07f5";
-        const FIREBASE_API_KEY = "AIzaSyCRLmtnPIghuQGPz-VHCw2U8NRrcavK-6c";
-        const FIRESTORE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
+    <!-- Firebase SDK - Módulo -->
+    <script type="module">
+        // Importar Firebase SDK
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 
-        // Helper: create user in Firestore via REST API
-        window.fbRestSignup = async (id, name, password) => {
+        // Configuración Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyCRLmtnPIghuQGPz-VHCw2U8NRrcavK-6c",
+            authDomain: "drc-bank-d07f5.firebaseapp.com",
+            projectId: "drc-bank-d07f5",
+            storageBucket: "drc-bank-d07f5.firebasestorage.app",
+            messagingSenderId: "32262689428",
+            appId: "1:32262689428:web:8a12b34b7e02fcc79c5a81",
+            measurementId: "G-XD4FJDC3XV"
+        };
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Exponer globalmente para acceso desde el HTML
+        window.firebaseApp = app;
+        window.firebaseAuth = auth;
+        window.firebaseDb = db;
+
+        // Helper: Crear usuario en Firestore + Auth
+        window.fbCreateUser = async (userId, name, password, email = null) => {
             try {
-                console.log('REST: Creating user', id, name);
+                console.log('Firebase: Creating user', userId, name);
                 
-                const userDoc = {
-                    fields: {
-                        id: { stringValue: String(id) },
-                        name: { stringValue: name },
-                        password: { stringValue: password },
-                        balance: { doubleValue: 100 },
-                        type: { stringValue: 'normal' },
-                        members: { arrayValue: { values: [{ stringValue: String(id) }] } },
-                        createdAt: { integerValue: Date.now() }
-                    }
-                };
-
-                const response = await fetch(
-                    `${FIRESTORE_URL}/users/${id}?key=${FIREBASE_API_KEY}`,
-                    {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(userDoc)
-                    }
-                );
-
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.error?.message || 'Error creating user');
-                }
-
-                const result = await response.json();
-                console.log('REST: User created successfully');
+                // Email por defecto si no se proporciona
+                const userEmail = email || `${userId}@drc-bank.local`;
                 
-                return {
-                    id: String(id),
+                // Crear usuario en Authentication
+                const userCredential = await createUserWithEmailAndPassword(auth, userEmail, password);
+                const firebaseUid = userCredential.user.uid;
+
+                // Crear documento en Firestore
+                const userRef = doc(db, 'users', userId);
+                await setDoc(userRef, {
+                    id: userId,
+                    uid: firebaseUid,
                     name: name,
+                    email: userEmail,
                     balance: 100,
                     type: 'normal',
-                    members: [String(id)],
+                    createdAt: Date.now()
+                });
+
+                console.log('Firebase: User created successfully:', userId);
+                return {
+                    id: userId,
+                    uid: firebaseUid,
+                    name: name,
+                    email: userEmail,
+                    balance: 100,
+                    type: 'normal',
                     createdAt: Date.now()
                 };
             } catch (err) {
-                console.error('REST signup error:', err);
+                console.error('Firebase signup error:', err);
                 throw err;
             }
         };
 
-        // Helper: login user (fetch from Firestore)
-        window.fbRestLogin = async (id, password) => {
+        // Helper: Login con Email/Password
+        window.fbLoginUser = async (email, password) => {
             try {
-                console.log('REST: Logging in user', id);
+                console.log('Firebase: Logging in user', email);
+                const userCredential = await signInWithEmailAndPassword(auth, email, password);
+                console.log('Firebase: Login successful:', userCredential.user.uid);
+                return userCredential.user;
+            } catch (err) {
+                console.error('Firebase login error:', err);
+                throw err;
+            }
+        };
 
-                const response = await fetch(
-                    `${FIRESTORE_URL}/users/${id}?key=${FIREBASE_API_KEY}`,
-                    { method: 'GET' }
-                );
-
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error('Usuario no encontrado en Firestore');
+        // Helper: Obtener usuario por ID desde Firestore
+        window.fbGetUserById = async (userId) => {
+            try {
+                const userRef = doc(db, 'users', userId);
+                const userSnap = await getDoc(userRef);
+                if (userSnap.exists()) {
+                    console.log('Firebase: User loaded:', userId);
+                    return userSnap.data();
                 }
-
-                const result = await response.json();
-                const fields = result.fields || {};
-
-                const user = {
-                    id: fields.id?.stringValue || String(id),
-                    name: fields.name?.stringValue || 'Usuario',
-                    balance: fields.balance?.doubleValue || 100,
-                    type: fields.type?.stringValue || 'normal',
-                    members: fields.members?.arrayValue?.values?.map(v => v.stringValue) || [String(id)],
-                    createdAt: parseInt(fields.createdAt?.integerValue || Date.now())
-                };
-
-                console.log('REST: User loaded successfully:', user);
-                return user;
+                return null;
             } catch (err) {
-                console.error('REST login error:', err);
-                throw err;
-            }
-        };
-
-        // Helper: update user balance in Firestore
-        window.fbRestUpdateBalance = async (id, newBalance) => {
-            try {
-                console.log('REST: Updating balance for', id, 'to', newBalance);
-
-                const userDoc = {
-                    fields: {
-                        balance: { doubleValue: newBalance }
-                    }
-                };
-
-                const response = await fetch(
-                    `${FIRESTORE_URL}/users/${id}?key=${FIREBASE_API_KEY}&updateMask.fieldPaths=balance`,
-                    {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(userDoc)
-                    }
-                );
-
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.error?.message || 'Error updating balance');
-                }
-
-                console.log('REST: Balance updated successfully');
-                return true;
-            } catch (err) {
-                console.error('REST update balance error:', err);
-                throw err;
-            }
-        };
-
-        // Helper: load user by ID (sync with Firestore)
-        window.fbRestLoadUserById = async (id) => {
-            try {
-                const response = await fetch(
-                    `${FIRESTORE_URL}/users/${id}?key=${FIREBASE_API_KEY}`,
-                    { method: 'GET' }
-                );
-
-                if (!response.ok) return null;
-
-                const result = await response.json();
-                const fields = result.fields || {};
-
-                return {
-                    id: fields.id?.stringValue || String(id),
-                    name: fields.name?.stringValue || 'Usuario',
-                    balance: fields.balance?.doubleValue || 100,
-                    type: fields.type?.stringValue || 'normal',
-                    members: fields.members?.arrayValue?.values?.map(v => v.stringValue) || [String(id)],
-                    createdAt: parseInt(fields.createdAt?.integerValue || Date.now())
-                };
-            } catch (err) {
-                console.error('REST load user error:', err);
+                console.error('Firebase get user error:', err);
                 return null;
             }
         };
 
-        console.log('Firestore REST API helpers initialized');
+        // Helper: Actualizar saldo del usuario
+        window.fbUpdateUserBalance = async (userId, newBalance) => {
+            try {
+                console.log('Firebase: Updating balance for', userId, 'to', newBalance);
+                const userRef = doc(db, 'users', userId);
+                await updateDoc(userRef, { balance: newBalance });
+                console.log('Firebase: Balance updated successfully');
+                return true;
+            } catch (err) {
+                console.error('Firebase update balance error:', err);
+                throw err;
+            }
+        };
+
+        // Helper: Auth State Listener
+        window.fbOnAuthStateChanged = (callback) => {
+            return onAuthStateChanged(auth, callback);
+        };
+
+        // Helper: Sign Out
+        window.fbSignOut = async () => {
+            try {
+                await signOut(auth);
+                console.log('Firebase: Sign out successful');
+            } catch (err) {
+                console.error('Firebase sign out error:', err);
+                throw err;
+            }
+        };
+
+        console.log('Firebase SDK initialized successfully');
     </script>
     <style>
         * {
@@ -989,6 +967,11 @@
         }
 
         function handleLogout() {
+            // Logout de Firebase si es posible
+            if (window.fbSignOut) {
+                window.fbSignOut().catch(err => console.log('Firebase logout:', err));
+            }
+
             currentUser = null;
             localStorage.removeItem('currentUserId');
             document.getElementById('loginModal').classList.remove('hidden');
@@ -1000,16 +983,41 @@
             showAlert('Sesión cerrada', 'success');
         }
 
-        // Sincronizar saldo con Firestore (async, sin bloquear)
+        // Sincronizar saldo con Firebase (async, sin bloquear)
         async function syncBalanceToFirestore() {
-            if (!currentUser || !window.fbRestUpdateBalance) return;
+            if (!currentUser || !window.fbUpdateUserBalance) return;
             
             try {
-                await window.fbRestUpdateBalance(currentUser.userId, currentUser.balance);
-                console.log('Saldo sincronizado con Firestore:', currentUser.balance);
+                await window.fbUpdateUserBalance(currentUser.userId, currentUser.balance);
+                console.log('Saldo sincronizado con Firebase:', currentUser.balance);
             } catch (err) {
                 console.log('No se pudo sincronizar saldo (local funciona):', err.message);
             }
+        }
+
+        // Cargar usuario desde Firebase o local
+        async function loadUserById(userId) {
+            // Intentar Firebase primero
+            if (window.fbGetUserById) {
+                try {
+                    const user = await window.fbGetUserById(userId);
+                    if (user) {
+                        console.log('Usuario cargado desde Firebase:', userId);
+                        return user;
+                    }
+                } catch (err) {
+                    console.log('No se pudo cargar de Firebase:', err);
+                }
+            }
+
+            // Fallback local
+            const users = getAllUsers();
+            if (users[userId]) {
+                console.log('Usuario cargado desde local:', userId);
+                return users[userId];
+            }
+
+            return null;
         }
 
         async function loginHandler() {
@@ -1023,14 +1031,23 @@
                 return;
             }
 
-            // Try Firestore REST API first
-            if (window.fbRestLogin) {
-                console.log('Intentando cargar usuario desde Firestore...');
+            // Construir email a partir del ID
+            const email = `${id}@drc-bank.local`;
+
+            // Intentar login con Firebase primero
+            if (window.fbLoginUser) {
+                console.log('Intentando login con Firebase...');
                 try {
-                    const userDoc = await window.fbRestLogin(id, password);
-                    console.log('Firestore login exitoso:', userDoc);
+                    const firebaseUser = await window.fbLoginUser(email, password);
+                    console.log('Firebase login exitoso');
                     
-                    currentUser = { ...userDoc, userId: String(id) };
+                    // Cargar datos del usuario desde Firestore
+                    const userData = await window.fbGetUserById(id);
+                    if (!userData) {
+                        throw new Error('Usuario no encontrado en Firestore');
+                    }
+                    
+                    currentUser = { ...userData, userId: String(id) };
                     setCurrentUser(id);
                     saveLinkedAccount(id);
 
@@ -1042,10 +1059,10 @@
                     updateUserDisplay();
                     try { renderTaxSection(); } catch(e) {}
                     
-                    showAlert(`Bienvenido ${currentUser.name}! (Firestore)`, 'success');
+                    showAlert(`Bienvenido ${currentUser.name}! (Firebase)`, 'success');
                     return;
                 } catch (err) {
-                    console.error('Error Firestore login:', err);
+                    console.error('Error Firebase login:', err);
                     console.log('Fallback a local...');
                 }
             }
@@ -1117,12 +1134,15 @@
                 return;
             }
 
-            // Try Firebase REST API first
-            if (window.fbRestSignup) {
-                console.log('Intentando crear cuenta en Firestore...');
+            // Construir email a partir del ID
+            const email = `${id}@drc-bank.local`;
+
+            // Intentar crear con Firebase primero
+            if (window.fbCreateUser) {
+                console.log('Intentando crear cuenta en Firebase...');
                 try {
-                    const userDoc = await window.fbRestSignup(id, name, password);
-                    console.log('Firestore signup exitoso:', userDoc);
+                    const userDoc = await window.fbCreateUser(id, name, password, email);
+                    console.log('Firebase signup exitoso:', userDoc);
                     
                     currentUser = { ...userDoc, userId: String(id) };
                     setCurrentUser(id);
@@ -1137,11 +1157,11 @@
                     updateUserDisplay();
                     try { renderTaxSection(); } catch(e) { console.log('renderTaxSection error (ignorado):', e); }
                     
-                    showAlert(`Cuenta creada en Firestore: ${name}`, 'success');
-                    console.log('=== SIGNUP SUCCESS (Firestore) ===');
+                    showAlert(`Cuenta creada en Firebase: ${name}`, 'success');
+                    console.log('=== SIGNUP SUCCESS (Firebase) ===');
                     return;
                 } catch (err) {
-                    console.error('Error Firestore signup:', err);
+                    console.error('Error Firebase signup:', err);
                     console.log('Fallback a local...');
                 }
             }
