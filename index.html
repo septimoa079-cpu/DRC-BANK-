@@ -6,81 +6,156 @@
     <title>Banco DRC - Wallet Local</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-    <script type="module">
-        // Firebase initialization and helper wrappers exposed to window
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+    <!-- Firebase REST API helpers -->
+    <script>
+        const FIREBASE_PROJECT = "drc-bank-d07f5";
+        const FIREBASE_API_KEY = "AIzaSyCRLmtnPIghuQGPz-VHCw2U8NRrcavK-6c";
+        const FIRESTORE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyCRLmtnPIghuQGPz-VHCw2U8NRrcavK-6c",
-            authDomain: "drc-bank-d07f5.firebaseapp.com",
-            projectId: "drc-bank-d07f5",
-            storageBucket: "drc-bank-d07f5.firebasestorage.app",
-            messagingSenderId: "32262689428",
-            appId: "1:32262689428:web:8a12b34b7e02fcc79c5a81",
-            measurementId: "G-XD4FJDC3XV"
+        // Helper: create user in Firestore via REST API
+        window.fbRestSignup = async (id, name, password) => {
+            try {
+                console.log('REST: Creating user', id, name);
+                
+                const userDoc = {
+                    fields: {
+                        id: { stringValue: String(id) },
+                        name: { stringValue: name },
+                        password: { stringValue: password },
+                        balance: { doubleValue: 100 },
+                        type: { stringValue: 'normal' },
+                        members: { arrayValue: { values: [{ stringValue: String(id) }] } },
+                        createdAt: { integerValue: Date.now() }
+                    }
+                };
+
+                const response = await fetch(
+                    `${FIRESTORE_URL}/users/${id}?key=${FIREBASE_API_KEY}`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(userDoc)
+                    }
+                );
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error?.message || 'Error creating user');
+                }
+
+                const result = await response.json();
+                console.log('REST: User created successfully');
+                
+                return {
+                    id: String(id),
+                    name: name,
+                    balance: 100,
+                    type: 'normal',
+                    members: [String(id)],
+                    createdAt: Date.now()
+                };
+            } catch (err) {
+                console.error('REST signup error:', err);
+                throw err;
+            }
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // Helper: login user (fetch from Firestore)
+        window.fbRestLogin = async (id, password) => {
+            try {
+                console.log('REST: Logging in user', id);
 
-        // small helpers to map numeric ID -> email for Auth
-        function emailFromId(id) {
-            return `${id}@drc.local`;
-        }
+                const response = await fetch(
+                    `${FIRESTORE_URL}/users/${id}?key=${FIREBASE_API_KEY}`,
+                    { method: 'GET' }
+                );
 
-        window.fb = {
-            auth,
-            db,
-            emailFromId
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error('Usuario no encontrado en Firestore');
+                }
+
+                const result = await response.json();
+                const fields = result.fields || {};
+
+                const user = {
+                    id: fields.id?.stringValue || String(id),
+                    name: fields.name?.stringValue || 'Usuario',
+                    balance: fields.balance?.doubleValue || 100,
+                    type: fields.type?.stringValue || 'normal',
+                    members: fields.members?.arrayValue?.values?.map(v => v.stringValue) || [String(id)],
+                    createdAt: parseInt(fields.createdAt?.integerValue || Date.now())
+                };
+
+                console.log('REST: User loaded successfully:', user);
+                return user;
+            } catch (err) {
+                console.error('REST login error:', err);
+                throw err;
+            }
         };
 
-        window.fbSignup = async (id, name, password) => {
-            const email = emailFromId(id);
-            const cred = await createUserWithEmailAndPassword(auth, email, password);
-            const uid = cred.user.uid;
-            const userDoc = {
-                id: String(id),
-                uid,
-                name,
-                balance: 100,
-                type: 'normal',
-                members: [String(id)],
-                createdAt: Date.now()
-            };
-            await setDoc(doc(db, 'users', String(id)), userDoc);
-            return userDoc;
+        // Helper: update user balance in Firestore
+        window.fbRestUpdateBalance = async (id, newBalance) => {
+            try {
+                console.log('REST: Updating balance for', id, 'to', newBalance);
+
+                const userDoc = {
+                    fields: {
+                        balance: { doubleValue: newBalance }
+                    }
+                };
+
+                const response = await fetch(
+                    `${FIRESTORE_URL}/users/${id}?key=${FIREBASE_API_KEY}&updateMask.fieldPaths=balance`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(userDoc)
+                    }
+                );
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error?.message || 'Error updating balance');
+                }
+
+                console.log('REST: Balance updated successfully');
+                return true;
+            } catch (err) {
+                console.error('REST update balance error:', err);
+                throw err;
+            }
         };
 
-        window.fbLogin = async (id, password) => {
-            const email = emailFromId(id);
-            const cred = await signInWithEmailAndPassword(auth, email, password);
-            const docRef = doc(db, 'users', String(id));
-            const snap = await getDoc(docRef);
-            if (!snap.exists()) throw new Error('Usuario no encontrado en Firestore');
-            return snap.data();
+        // Helper: load user by ID (sync with Firestore)
+        window.fbRestLoadUserById = async (id) => {
+            try {
+                const response = await fetch(
+                    `${FIRESTORE_URL}/users/${id}?key=${FIREBASE_API_KEY}`,
+                    { method: 'GET' }
+                );
+
+                if (!response.ok) return null;
+
+                const result = await response.json();
+                const fields = result.fields || {};
+
+                return {
+                    id: fields.id?.stringValue || String(id),
+                    name: fields.name?.stringValue || 'Usuario',
+                    balance: fields.balance?.doubleValue || 100,
+                    type: fields.type?.stringValue || 'normal',
+                    members: fields.members?.arrayValue?.values?.map(v => v.stringValue) || [String(id)],
+                    createdAt: parseInt(fields.createdAt?.integerValue || Date.now())
+                };
+            } catch (err) {
+                console.error('REST load user error:', err);
+                return null;
+            }
         };
 
-        window.fbLogout = async () => {
-            await signOut(auth);
-        };
-
-        window.fbLoadUserByUid = async (uid) => {
-            const q = query(collection(db, 'users'), where('uid', '==', uid));
-            const snaps = await getDocs(q);
-            if (snaps.empty) return null;
-            return snaps.docs[0].data();
-        };
-
-        window.fbLoadUserById = async (id) => {
-            const d = await getDoc(doc(db, 'users', String(id)));
-            return d.exists() ? d.data() : null;
-        };
-
-        // expose onAuthStateChanged wrapper
-        window.fbOnAuthStateChanged = (cb) => onAuthStateChanged(auth, cb);
+        console.log('Firestore REST API helpers initialized');
     </script>
     <style>
         * {
@@ -526,8 +601,13 @@
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <button class="bank-button" id="bankAdminBtn" onclick="openBankAdmin()">🏦 Banco</button>
-            <button class="bank-button" id="logoutAdminBtn" onclick="logoutAdmin()" style="display: none; background: rgba(255, 100, 100, 0.3); border-color: #ff6464;">Salir Admin</button>
+            <div style="position: absolute; top: 15px; left: 15px;">
+                <button class="bank-button" id="bankAdminBtn" onclick="openBankAdmin()">🏦 Banco</button>
+                <button class="bank-button" id="logoutAdminBtn" onclick="logoutAdmin()" style="display: none; background: rgba(255, 100, 100, 0.3); border-color: #ff6464;">Salir Admin</button>
+            </div>
+            <div style="position: absolute; top: 15px; right: 15px;">
+                <button class="bank-button" id="logoutBtn" onclick="handleLogout()" style="background: rgba(150, 150, 255, 0.3); border-color: #9696ff;">Salir</button>
+            </div>
             <h1>💰 Banco DRC</h1>
             <div class="saldo">Tu saldo: <strong id="userBalance">$0.00</strong></div>
             <div style="margin-top: 5px; font-size: 12px;" id="userName"></div>
@@ -615,8 +695,8 @@
                 <div class="instructions">
                     <strong>Enviar dinero:</strong><br>
                     1. Ingresa el monto<br>
-                    2. Haz clic en "Generar QR"<br>
-                    3. Comparte el código con otra persona<br>
+                    2. Haz clic en "Generar QR" o "Enviar por ID"<br>
+                    3. Comparte el código o envía directamente<br>
                     <br>
                     <strong>Recibir dinero:</strong><br>
                     1. Haz clic en "📷 Escanear Transferencia"<br>
@@ -637,6 +717,15 @@
                     </div>
                     <div id="qrcode"></div>
                     <button class="button-secondary" onclick="downloadQR()" style="margin-top: 10px; margin-bottom: 0;">Descargar</button>
+                </div>
+
+                <!-- Transferencia por ID -->
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">
+                    <div style="font-weight: 600; margin-bottom: 10px;">Enviar por ID</div>
+                    <div class="input-group full" style="flex-direction: column; gap: 8px;">
+                        <input type="text" id="transferRecipientId" placeholder="ID del destinatario (6-10 dígitos)" style="width: 100%;">
+                        <button class="button-success" onclick="transferByIdHandler()" style="width: 100%;">Enviar Dinero</button>
+                    </div>
                 </div>
 
                 <button class="button-secondary" onclick="startTransferScanning()" style="margin-top: 15px; width: 100%; margin-bottom: 0;">📷 Escanear Transferencia</button>
@@ -899,39 +988,73 @@
             localStorage.setItem('currentUserId', userId);
         }
 
+        function handleLogout() {
+            currentUser = null;
+            localStorage.removeItem('currentUserId');
+            document.getElementById('loginModal').classList.remove('hidden');
+            document.getElementById('loginId').value = '';
+            document.getElementById('loginPassword').value = '';
+            document.getElementById('signupId').value = '';
+            document.getElementById('signupName').value = '';
+            document.getElementById('signupPassword').value = '';
+            showAlert('Sesión cerrada', 'success');
+        }
+
+        // Sincronizar saldo con Firestore (async, sin bloquear)
+        async function syncBalanceToFirestore() {
+            if (!currentUser || !window.fbRestUpdateBalance) return;
+            
+            try {
+                await window.fbRestUpdateBalance(currentUser.userId, currentUser.balance);
+                console.log('Saldo sincronizado con Firestore:', currentUser.balance);
+            } catch (err) {
+                console.log('No se pudo sincronizar saldo (local funciona):', err.message);
+            }
+        }
+
         async function loginHandler() {
             const id = (document.getElementById('loginId') || {}).value || '';
             const password = (document.getElementById('loginPassword') || {}).value || '';
+
+            console.log('loginHandler llamado con ID:', id);
 
             if (!id) {
                 showAlert('Ingresa un ID', 'error');
                 return;
             }
 
-            // Prefer Firebase login when available
-            if (window.fbLogin) {
+            // Try Firestore REST API first
+            if (window.fbRestLogin) {
+                console.log('Intentando cargar usuario desde Firestore...');
                 try {
-                    const userDoc = await window.fbLogin(id, password);
+                    const userDoc = await window.fbRestLogin(id, password);
+                    console.log('Firestore login exitoso:', userDoc);
+                    
                     currentUser = { ...userDoc, userId: String(id) };
                     setCurrentUser(id);
                     saveLinkedAccount(id);
 
+                    // Limpiar inputs
+                    document.getElementById('loginId').value = '';
+                    document.getElementById('loginPassword').value = '';
+
                     document.getElementById('loginModal').classList.add('hidden');
                     updateUserDisplay();
-                    loadHistory();
-                    loadMyJobs();
-                    loadAcceptedJobs();
-                    showAlert(`Bienvenido ${currentUser.name}!`, 'success');
+                    try { renderTaxSection(); } catch(e) {}
+                    
+                    showAlert(`Bienvenido ${currentUser.name}! (Firestore)`, 'success');
+                    return;
                 } catch (err) {
-                    showAlert('Error al iniciar sesión: ' + err.message, 'error');
+                    console.error('Error Firestore login:', err);
+                    console.log('Fallback a local...');
                 }
-                return;
             }
 
             // Fallback: local user system
+            console.log('Usando fallback local para iniciar sesión...');
             const users = getAllUsers();
             if (!users[id]) {
-                showAlert('Usuario no encontrado (local)', 'error');
+                showAlert('Usuario no encontrado', 'error');
                 return;
             }
 
@@ -939,11 +1062,18 @@
             setCurrentUser(id);
             saveLinkedAccount(id);
 
-            document.getElementById('loginModal').classList.add('hidden');
-            updateUserDisplay();
-            loadHistory();
-            loadMyJobs();
-            loadAcceptedJobs();
+            // Limpiar inputs
+            document.getElementById('loginId').value = '';
+            document.getElementById('loginPassword').value = '';
+
+            try {
+                document.getElementById('loginModal').classList.add('hidden');
+            } catch(e) {}
+            
+            try { updateUserDisplay(); } catch(e) {}
+            try { renderTaxSection(); } catch(e) {}
+            
+            showAlert(`Bienvenido ${currentUser.name}!`, 'success');
         }
 
         function switchLoginTab(tab) {
@@ -962,9 +1092,17 @@
         }
 
         async function signupHandler() {
-            const id = (document.getElementById('signupId') || {}).value || '';
-            const name = (document.getElementById('signupName') || {}).value || '';
-            const password = (document.getElementById('signupPassword') || {}).value || '';
+            console.log('=== SIGNUP START ===');
+            
+            const idInput = document.getElementById('signupId');
+            const nameInput = document.getElementById('signupName');
+            const passwordInput = document.getElementById('signupPassword');
+            
+            const id = (idInput || {}).value || '';
+            const name = (nameInput || {}).value || '';
+            const password = (passwordInput || {}).value || '';
+
+            console.log('signupHandler llamado con:', { id, name, password });
 
             if (!/^\d{6,10}$/.test(id)) {
                 showAlert('El ID debe ser numérico (6-10 dígitos)', 'error');
@@ -979,30 +1117,41 @@
                 return;
             }
 
-            // Prefer Firebase signup when available
-            if (window.fbSignup) {
+            // Try Firebase REST API first
+            if (window.fbRestSignup) {
+                console.log('Intentando crear cuenta en Firestore...');
                 try {
-                    const userDoc = await window.fbSignup(id, name, password);
+                    const userDoc = await window.fbRestSignup(id, name, password);
+                    console.log('Firestore signup exitoso:', userDoc);
+                    
                     currentUser = { ...userDoc, userId: String(id) };
                     setCurrentUser(id);
                     saveLinkedAccount(id);
 
+                    // Limpiar inputs
+                    if (idInput) idInput.value = '';
+                    if (nameInput) nameInput.value = '';
+                    if (passwordInput) passwordInput.value = '';
+
                     document.getElementById('loginModal').classList.add('hidden');
                     updateUserDisplay();
-                    loadHistory();
-                    loadMyJobs();
-                    loadAcceptedJobs();
-                    showAlert(`Cuenta creada: ${name}`, 'success');
+                    try { renderTaxSection(); } catch(e) { console.log('renderTaxSection error (ignorado):', e); }
+                    
+                    showAlert(`Cuenta creada en Firestore: ${name}`, 'success');
+                    console.log('=== SIGNUP SUCCESS (Firestore) ===');
+                    return;
                 } catch (err) {
-                    showAlert('Error al crear cuenta: ' + err.message, 'error');
+                    console.error('Error Firestore signup:', err);
+                    console.log('Fallback a local...');
                 }
-                return;
             }
 
             // Fallback: local creation
+            console.log('Usando fallback local para crear cuenta...');
             const users = getAllUsers();
+            
             if (users[id]) {
-                showAlert('Ese ID ya existe (local)', 'error');
+                showAlert('Ese ID ya existe', 'error');
                 return;
             }
 
@@ -1015,66 +1164,76 @@
             };
 
             saveUsers(users);
+            console.log('Usuario guardado localmente:', id);
+            
             currentUser = { ...users[id], userId: id };
             setCurrentUser(id);
             saveLinkedAccount(id);
 
-            document.getElementById('loginModal').classList.add('hidden');
-            updateUserDisplay();
-            loadHistory();
-            loadMyJobs();
-            loadAcceptedJobs();
+            // Limpiar inputs
+            if (idInput) idInput.value = '';
+            if (nameInput) nameInput.value = '';
+            if (passwordInput) passwordInput.value = '';
+
+            try {
+                document.getElementById('loginModal').classList.add('hidden');
+            } catch(e) {}
+            
+            try { updateUserDisplay(); } catch(e) {}
+            try { renderTaxSection(); } catch(e) {}
+            
             showAlert(`Bienvenido ${name}!`, 'success');
+            console.log('=== SIGNUP SUCCESS (Local) ===');
         }
 
-+        // Linked accounts helpers (store simple list of IDs on device)
-+        function saveLinkedAccount(id) {
-+            try {
-+                const key = 'linkedAccounts';
-+                const list = JSON.parse(localStorage.getItem(key) || '[]');
-+                const s = String(id);
-+                const filtered = [s, ...list.filter(x => x !== s)].slice(0, 12);
-+                localStorage.setItem(key, JSON.stringify(filtered));
-+            } catch (e) { /* ignore */ }
-+        }
-+
-+        function loadLinkedAccounts() {
-+            try {
-+                return JSON.parse(localStorage.getItem('linkedAccounts') || '[]');
-+            } catch (e) {
-+                return [];
-+            }
-+        }
-+
-+        function renderLinkedAccountsSelect() {
-+            const sel = document.getElementById('linkedAccountsSelect');
-+            if (!sel) return;
-+            sel.innerHTML = '';
-+            const list = loadLinkedAccounts();
-+            if (list.length === 0) {
-+                const opt = document.createElement('option');
-+                opt.value = '';
-+                opt.textContent = '-- (sin cuentas ligadas) --';
-+                sel.appendChild(opt);
-+                return;
-+            }
-+            for (const id of list) {
-+                const opt = document.createElement('option');
-+                opt.value = id;
-+                opt.textContent = id;
-+                sel.appendChild(opt);
-+            }
-+        }
-+
-+        function useLinkedAccount() {
-+            const sel = document.getElementById('linkedAccountsSelect');
-+            if (!sel) return;
-+            const id = sel.value;
-+            if (!id) return;
-+            const input = document.getElementById('loginId');
-+            if (input) input.value = id;
-+        }
-*** End Patch
+        // Linked accounts helpers (store simple list of IDs on device)
+        function saveLinkedAccount(id) {
+            try {
+                const key = 'linkedAccounts';
+                const list = JSON.parse(localStorage.getItem(key) || '[]');
+                const s = String(id);
+                const filtered = [s, ...list.filter(x => x !== s)].slice(0, 12);
+                localStorage.setItem(key, JSON.stringify(filtered));
+            } catch (e) { /* ignore */ }
+        }
+
+        function loadLinkedAccounts() {
+            try {
+                return JSON.parse(localStorage.getItem('linkedAccounts') || '[]');
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function renderLinkedAccountsSelect() {
+            const sel = document.getElementById('linkedAccountsSelect');
+            if (!sel) return;
+            sel.innerHTML = '';
+            const list = loadLinkedAccounts();
+            if (list.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '-- (sin cuentas ligadas) --';
+                sel.appendChild(opt);
+                return;
+            }
+            for (const id of list) {
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = id;
+                sel.appendChild(opt);
+            }
+        }
+
+        function useLinkedAccount() {
+            const sel = document.getElementById('linkedAccountsSelect');
+            if (!sel) return;
+            const id = sel.value;
+            if (!id) return;
+            const input = document.getElementById('loginId');
+            if (input) input.value = id;
+        }
+
         // ==================== UI ACTUALIZACIÓN ====================
         function updateUserDisplay() {
             if (!currentUser) return;
@@ -1588,6 +1747,82 @@
                 link.download = 'transferencia_qr.png';
                 link.click();
             }
+        }
+
+        function transferByIdHandler() {
+            if (!currentUser) {
+                showAlert('Debes estar logueado', 'error');
+                return;
+            }
+
+            const recipientId = (document.getElementById('transferRecipientId') || {}).value || '';
+            const amount = parseFloat((document.getElementById('transferAmount') || {}).value || 0);
+
+            if (!recipientId || !/^\d{6,10}$/.test(recipientId)) {
+                showAlert('Ingresa un ID válido (6-10 dígitos)', 'error');
+                return;
+            }
+
+            if (!amount || amount <= 0 || amount > currentUser.balance) {
+                showAlert('Ingresa un monto válido y que no exceda tu saldo', 'error');
+                return;
+            }
+
+            if (recipientId === currentUser.userId) {
+                showAlert('No puedes transferir dinero a tu propia cuenta', 'error');
+                return;
+            }
+
+            // Verificar que el usuario existe
+            const users = getAllUsers();
+            if (!users[recipientId]) {
+                showAlert('El usuario no existe', 'error');
+                return;
+            }
+
+            // Realizar la transferencia
+            const recipient = users[recipientId];
+            currentUser.balance -= amount;
+            recipient.balance += amount;
+            users[currentUser.userId] = currentUser;
+            users[recipientId] = recipient;
+            saveUsers(users);
+
+            // Registrar en historial
+            const senderHistory = getUserHistory(currentUser.userId);
+            senderHistory.push({
+                type: 'out',
+                amount: amount,
+                toUser: recipientId,
+                toName: recipient.name,
+                reason: 'Transferencia directa',
+                txId: `direct_${Date.now()}`,
+                timestamp: Date.now()
+            });
+            saveUserHistory(currentUser.userId, senderHistory);
+
+            const recipientHistory = getUserHistory(recipientId);
+            recipientHistory.push({
+                type: 'in',
+                amount: amount,
+                fromUser: currentUser.userId,
+                fromName: currentUser.name,
+                reason: 'Transferencia directa',
+                txId: `direct_${Date.now()}`,
+                timestamp: Date.now()
+            });
+            saveUserHistory(recipientId, recipientHistory);
+
+            // Sincronizar con Firestore si es posible
+            syncBalanceToFirestore();
+
+            // Limpiar campos
+            document.getElementById('transferRecipientId').value = '';
+            document.getElementById('transferAmount').value = '';
+            document.getElementById('transferPreview').style.display = 'none';
+
+            updateUserDisplay();
+            showAlert(`Transferencia realizada! Se enviaron $${amount.toFixed(2)} a ${recipient.name}`, 'success');
         }
 
         function startTransferScanning() {
