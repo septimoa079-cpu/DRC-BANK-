@@ -1207,6 +1207,10 @@
                 showAlert('Ingresa una contraseña', 'error');
                 return;
             }
+            if (password.length < 6) {
+                showAlert('La contraseña debe tener al menos 6 caracteres', 'error');
+                return;
+            }
 
             // Construir email a partir del ID
             const email = `${id}@drc-bank.local`;
@@ -1236,6 +1240,8 @@
                     return;
                 } catch (err) {
                     console.error('Error Firebase signup:', err);
+                    // Mostrar al usuario el mensaje de error de Firebase para depuración
+                    try { showAlert('Firebase: ' + (err.message || err.code || 'Error al crear cuenta'), 'error'); } catch(e) {}
                     console.log('Fallback a local...');
                 }
             }
