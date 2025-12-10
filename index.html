@@ -1,0 +1,2515 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banco DRC - Wallet Local</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <script type="module">
+        // Firebase initialization and helper wrappers exposed to window
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCRLmtnPIghuQGPz-VHCw2U8NRrcavK-6c",
+            authDomain: "drc-bank-d07f5.firebaseapp.com",
+            projectId: "drc-bank-d07f5",
+            storageBucket: "drc-bank-d07f5.firebasestorage.app",
+            messagingSenderId: "32262689428",
+            appId: "1:32262689428:web:8a12b34b7e02fcc79c5a81",
+            measurementId: "G-XD4FJDC3XV"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // small helpers to map numeric ID -> email for Auth
+        function emailFromId(id) {
+            return `${id}@drc.local`;
+        }
+
+        window.fb = {
+            auth,
+            db,
+            emailFromId
+        };
+
+        window.fbSignup = async (id, name, password) => {
+            const email = emailFromId(id);
+            const cred = await createUserWithEmailAndPassword(auth, email, password);
+            const uid = cred.user.uid;
+            const userDoc = {
+                id: String(id),
+                uid,
+                name,
+                balance: 100,
+                type: 'normal',
+                members: [String(id)],
+                createdAt: Date.now()
+            };
+            await setDoc(doc(db, 'users', String(id)), userDoc);
+            return userDoc;
+        };
+
+        window.fbLogin = async (id, password) => {
+            const email = emailFromId(id);
+            const cred = await signInWithEmailAndPassword(auth, email, password);
+            const docRef = doc(db, 'users', String(id));
+            const snap = await getDoc(docRef);
+            if (!snap.exists()) throw new Error('Usuario no encontrado en Firestore');
+            return snap.data();
+        };
+
+        window.fbLogout = async () => {
+            await signOut(auth);
+        };
+
+        window.fbLoadUserByUid = async (uid) => {
+            const q = query(collection(db, 'users'), where('uid', '==', uid));
+            const snaps = await getDocs(q);
+            if (snaps.empty) return null;
+            return snaps.docs[0].data();
+        };
+
+        window.fbLoadUserById = async (id) => {
+            const d = await getDoc(doc(db, 'users', String(id)));
+            return d.exists() ? d.data() : null;
+        };
+
+        // expose onAuthStateChanged wrapper
+        window.fbOnAuthStateChanged = (cb) => onAuthStateChanged(auth, cb);
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 500px;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header .saldo {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .bank-button {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid white;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .bank-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #999;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab-btn.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .content {
+            padding: 20px;
+            min-height: 400px;
+            position: relative;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .input-group input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .button-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .button-primary:hover {
+            background: #5568d3;
+        }
+
+        .button-secondary {
+            background: #f0f4ff;
+            color: #667eea;
+            border: 1px solid #667eea;
+        }
+
+        .button-secondary:hover {
+            background: #e8ecff;
+        }
+
+        .button-success {
+            background: #4caf50;
+            color: white;
+        }
+
+        .button-success:hover {
+            background: #45a049;
+        }
+
+        .button-danger {
+            background: #f44336;
+            color: white;
+        }
+
+        .button-danger:hover {
+            background: #da190b;
+        }
+
+        .qr-container {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        #qrcode {
+            display: inline-block;
+            margin: 15px 0;
+        }
+
+        .instructions {
+            background: #f0f4ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .camera-container {
+            display: none;
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 15px;
+            margin-bottom: 15px;
+        }
+
+        .camera-container.active {
+            display: block;
+        }
+
+        .camera-container video {
+            width: 100%;
+            height: auto;
+            display: block;
+            transform: scaleX(-1);
+        }
+
+        .camera-controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            z-index: 10;
+        }
+
+        .close-camera {
+            background: rgba(0, 0, 0, 0.7) !important;
+            color: white !important;
+            padding: 8px 12px !important;
+            border-radius: 6px !important;
+            font-size: 12px !important;
+        }
+
+        .close-camera:hover {
+            background: rgba(0, 0, 0, 0.9) !important;
+        }
+
+        .job-item {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .job-item strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .job-item-meta {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 10px;
+        }
+
+        .job-amount {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4caf50;
+            margin-bottom: 10px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .modal-text {
+            margin-bottom: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .modal-buttons button {
+            flex: 1;
+        }
+
+        .alert {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            z-index: 2000;
+            animation: slideIn 0.3s ease-out;
+            max-width: 300px;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .alert-success {
+            background: #4caf50;
+        }
+
+        .alert-error {
+            background: #f44336;
+        }
+
+        .alert-info {
+            background: #2196F3;
+        }
+
+        .history-empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .history-item {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+
+        .history-item:last-child {
+            border-bottom: none;
+        }
+
+        .history-in {
+            color: #4caf50;
+        }
+
+        .history-out {
+            color: #f44336;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .login-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .login-tab-btn {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .login-tab-btn.active {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+
+        .login-tab-content {
+            display: none;
+        }
+
+        .login-tab-content.active {
+            display: block;
+        }
+
+        .user-select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .user-select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .input-group.full {
+            flex-direction: column;
+        }
+
+        .input-group.full input,
+        .input-group.full button {
+            width: 100%;
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                border-radius: 0;
+            }
+
+            body {
+                padding: 0;
+            }
+
+            .alert {
+                right: 10px;
+                left: 10px;
+                max-width: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <button class="bank-button" id="bankAdminBtn" onclick="openBankAdmin()">🏦 Banco</button>
+            <button class="bank-button" id="logoutAdminBtn" onclick="logoutAdmin()" style="display: none; background: rgba(255, 100, 100, 0.3); border-color: #ff6464;">Salir Admin</button>
+            <h1>💰 Banco DRC</h1>
+            <div class="saldo">Tu saldo: <strong id="userBalance">$0.00</strong></div>
+            <div style="margin-top: 5px; font-size: 12px;" id="userName"></div>
+        </div>
+
+        <!-- Modal de Login Inicial -->
+        <div id="loginModal" class="modal active">
+            <div class="modal-content">
+                <div class="modal-title">Inicio de sesión — Banco DRC</div>
+
+                <div class="login-tabs">
+                    <button class="login-tab-btn active" id="loginTabBtn" onclick="switchLoginTab('login')">Iniciar sesión</button>
+                    <button class="login-tab-btn" id="signupTabBtn" onclick="switchLoginTab('signup')">Crear cuenta</button>
+                </div>
+
+                <!-- Tab: Iniciar sesión -->
+                <div id="loginUserTab" class="login-tab-content active">
+                    <div class="input-group full" style="flex-direction:column; gap:8px;">
+                        <input type="text" id="loginId" placeholder="ID numérico (6-10 dígitos)" style="width: 100%;">
+                        <input type="password" id="loginPassword" placeholder="Contraseña" style="width: 100%;">
+                        <div style="display:flex; gap:8px; width:100%">
+                            <button class="button-primary" style="flex:1;" onclick="loginHandler()">Ingresar</button>
+                            <button class="button-secondary" style="flex:1;" onclick="document.getElementById('loginId').value='';document.getElementById('loginPassword').value=''">Limpiar</button>
+                        </div>
+                        <div style="margin-top:8px; font-size:13px; color:#666">Cuentas ligadas en este dispositivo:</div>
+                        <div style="display:flex; gap:8px; margin-top:6px;">
+                            <select id="linkedAccountsSelect" style="flex:1;"></select>
+                            <button class="button-primary" onclick="useLinkedAccount()">Usar</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Crear cuenta -->
+                <div id="signupUserTab" class="login-tab-content">
+                    <div class="input-group full" style="flex-direction:column; gap:8px;">
+                        <input type="text" id="signupId" placeholder="ID numérico (6-10 dígitos)" style="width: 100%;">
+                        <input type="text" id="signupName" placeholder="Tu nombre" style="width: 100%;">
+                        <input type="password" id="signupPassword" placeholder="Contraseña" style="width: 100%;">
+                        <button class="button-success" style="width: 100%;" onclick="signupHandler()">Crear Cuenta</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal para administrador banco -->
+        <div id="bankModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-title">🏦 Administrador Banco DRC</div>
+                <div class="input-group full">
+                    <input type="password" id="bankPassword" placeholder="Contraseña" style="width: 100%;">
+                    <button class="button-primary" style="width: 100%; margin-top: 10px;" onclick="loginBankAdmin()">Acceder</button>
+                    <button class="button-secondary" style="width: 100%; margin-top: 10px;" onclick="closeBankAdmin()">Cancelar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contenido Principal -->
+        <div class="content">
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('jobs-tab')">IMPUESTOS</button>
+                <button class="tab-btn" onclick="switchTab('transfer-tab')">Transferencias</button>
+                <button class="tab-btn" onclick="switchTab('history-tab')">Historial</button>
+            </div>
+
+            <!-- Tab: IMPUESTOS -->
+            <div id="jobs-tab" class="tab-content active">
+                <div class="instructions">
+                    <strong>Impuestos mensuales:</strong><br>
+                    El día 1 de cada mes se cobra automáticamente <strong>8 DRC</strong>.
+                    Puedes pagar antes si lo deseas. Si te retrasas, cada día se aplica un interés simple del <strong>10% sobre el monto base</strong> (no compuesto).
+                </div>
+
+                <div id="taxContainer" style="margin-top: 10px;">
+                    <!-- Aquí se renderiza el estado del impuesto para el usuario -->
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <button class="button-secondary" onclick="renderTaxSection()" style="width: 100%;">Actualizar Estado de Impuesto</button>
+                </div>
+            </div>
+
+            <!-- Tab: Transferencias -->
+            <div id="transfer-tab" class="tab-content">
+                <div class="instructions">
+                    <strong>Enviar dinero:</strong><br>
+                    1. Ingresa el monto<br>
+                    2. Haz clic en "Generar QR"<br>
+                    3. Comparte el código con otra persona<br>
+                    <br>
+                    <strong>Recibir dinero:</strong><br>
+                    1. Haz clic en "📷 Escanear Transferencia"<br>
+                    2. Escanea el código QR<br>
+                    3. Confirma y recibe el dinero
+                </div>
+                <div class="input-group">
+                    <input type="number" id="transferAmount" placeholder="Monto a transferir" min="0" step="0.01" oninput="updateTransferPreview()">
+                    <button class="button-primary" onclick="generateQR()">Generar QR</button>
+                </div>
+                <div id="transferPreview" style="background: #f0f4ff; padding: 12px; border-radius: 6px; text-align: center; margin-bottom: 15px; display: none;">
+                    <div style="font-size: 12px; color: #999; margin-bottom: 5px;">Monto a transferir</div>
+                    <div id="previewAmount" style="font-size: 24px; font-weight: bold; color: #667eea;">$0.00</div>
+                </div>
+                <div id="qrContainer" class="qr-container">
+                    <div style="margin-bottom: 15px;">
+                        <strong>Tu código QR</strong>
+                    </div>
+                    <div id="qrcode"></div>
+                    <button class="button-secondary" onclick="downloadQR()" style="margin-top: 10px; margin-bottom: 0;">Descargar</button>
+                </div>
+
+                <button class="button-secondary" onclick="startTransferScanning()" style="margin-top: 15px; width: 100%; margin-bottom: 0;">📷 Escanear Transferencia</button>
+                <div id="transferCameraContainer" class="camera-container">
+                    <video id="transferCamera" autoplay playsinline></video>
+                    <div class="camera-controls">
+                        <button class="close-camera" onclick="stopTransferScanning()">✕ Cerrar</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Historial -->
+            <div id="history-tab" class="tab-content">
+                <div id="historyContainer" class="history-empty">Sin transacciones</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para confirmación de transferencia -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-title">Confirmar Transferencia</div>
+            <div class="modal-text">
+                <div style="font-size: 16px; margin: 15px 0;">
+                    <strong id="modalAmount">$0.00</strong>
+                </div>
+                <div style="font-size: 12px; color: #999; margin-bottom: 15px;">
+                    De: <span id="modalFromUser">-</span><br>
+                    Para: <span id="modalToUser">Tu cuenta</span>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="button-danger" onclick="rejectTransfer()">Rechazar</button>
+                <button class="button-success" onclick="acceptTransfer()">Aceptar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para forzar aceptación cuando no hay registro local -->
+    <div id="forceAcceptModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-title">Forzar aceptación</div>
+            <div class="modal-text">
+                <div id="forceAcceptText">No se encontró registro de esta transferencia en este dispositivo. Puedes forzar la aceptación (creará un registro local). Esto puede desincronizar saldos entre dispositivos.</div>
+            </div>
+            <div class="modal-buttons">
+                <button class="button-secondary" onclick="closeForceAccept()">Cancelar</button>
+                <button class="button-primary" onclick="forceAcceptTransfer()">Forzar aceptar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para aceptar trabajo -->
+    <div id="jobConfirmModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-title">Aceptar Trabajo</div>
+            <div class="modal-text">
+                <div><strong id="jobConfirmTitle">-</strong></div>
+                <div style="font-size: 12px; color: #999; margin: 10px 0;" id="jobConfirmDesc"></div>
+                <div style="font-size: 14px; color: #999; margin-bottom: 10px;">
+                    Creador: <strong id="jobConfirmCreator">-</strong>
+                </div>
+                <div style="font-size: 18px; font-weight: bold; color: #4caf50; margin: 15px 0;">
+                    Pago: <span id="jobConfirmAmount">$0.00</span>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="button-danger" onclick="rejectJob()">Rechazar</button>
+                <button class="button-success" onclick="acceptJob()">Aceptar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para notificaciones de trabajos -->
+    <div id="jobNotificationModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-title">📢 Notificación</div>
+            <div class="modal-text">
+                <div id="notificationMessage"></div>
+            </div>
+            <div class="modal-buttons">
+                <button class="button-primary" onclick="closeNotification()" style="flex: 1;">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== VARIABLES GLOBALES ====================
+        let currentUser = null;
+        let pendingJob = null;
+        let pendingTransfer = null;
+        let jobScanningActive = false;
+        let jobVideoStream = null;
+        let transferScanningActive = false;
+        let transferVideoStream = null;
+
+        // ==================== INICIALIZACIÓN ====================
+        window.addEventListener('load', () => {
+            initializeApp();
+            // Verificar cambios cada 2 segundos
+            setInterval(syncLocalStorage, 2000);
+        });
+
+        function initializeApp() {
+            // If Firebase auth is available, attach listener to restore auth state
+            if (window.fbOnAuthStateChanged) {
+                window.fbOnAuthStateChanged(async (fbUser) => {
+                    if (fbUser) {
+                        try {
+                            const doc = await window.fbLoadUserByUid(fbUser.uid);
+                            if (doc) {
+                                currentUser = { ...doc, userId: String(doc.id) };
+                                setCurrentUser(currentUser.userId);
+                                document.getElementById('loginModal').classList.add('hidden');
+                                updateUserDisplay();
+                                loadHistory();
+                                loadMyJobs();
+                                loadAcceptedJobs();
+                                return;
+                            }
+                        } catch (e) {
+                            console.error('Error cargando usuario desde Firestore:', e);
+                        }
+                    }
+                });
+            }
+
+            const savedUser = localStorage.getItem('currentUserId');
+            if (savedUser) {
+                const users = getAllUsers();
+                if (users[savedUser]) {
+                    currentUser = { ...users[savedUser], userId: savedUser };
+                    document.getElementById('loginModal').classList.add('hidden');
+                    updateUserDisplay();
+                    loadHistory();
+                    loadMyJobs();
+                    loadAcceptedJobs();
+                } else {
+                    initializePreConfiguredUsers();
+                    refreshUserList();
+                }
+            } else {
+                initializePreConfiguredUsers();
+                refreshUserList();
+            }
+        }
+
+        // Sincronizar datos entre dispositivos (cada 2 segundos)
+        function syncLocalStorage() {
+            if (!currentUser) return;
+            
+            // Recargar datos del usuario actual desde localStorage
+            const users = getAllUsers();
+            if (users[currentUser.userId]) {
+                const updatedUser = users[currentUser.userId];
+                // Si el saldo cambió, actualizar
+                if (updatedUser.balance !== currentUser.balance) {
+                    currentUser.balance = updatedUser.balance;
+                    updateUserDisplay();
+                }
+            }
+
+            // Aplicar impuestos automáticos / recalcular intereses
+            checkAndApplyTaxes();
+
+            // Verificar si soy creador de trabajos y alguien los aceptó
+            checkForNewAcceptedJobs();
+
+            // Recargar historial
+            loadHistory();
+
+            // Evitar re-renderizar la sección de impuestos/préstamos si el usuario está escribiendo
+            const taxContainer = document.getElementById('taxContainer');
+            const active = document.activeElement;
+            const userTypingInTax = taxContainer && active && taxContainer.contains(active);
+
+            if (!userTypingInTax) {
+                loadMyJobs();
+                loadAcceptedJobs();
+            }
+        }
+
+        function checkForNewAcceptedJobs() {
+            if (!currentUser) return;
+
+            const myJobs = getUserJobs(currentUser.userId);
+            
+            myJobs.forEach(job => {
+                // Buscar a quién aceptó este trabajo
+                const allUsers = getAllUsers();
+                
+                for (const [userId, user] of Object.entries(allUsers)) {
+                    if (user.isBank) continue;
+                    
+                    const acceptedJobs = getAcceptedJobs(userId);
+                    const hasAccepted = acceptedJobs.find(j => j.jobId === job.jobId);
+                    
+                    if (hasAccepted && !job.acceptedByNotified) {
+                        // Marcar como notificado
+                        job.acceptedByNotified = true;
+                        saveUserJobs(currentUser.userId, myJobs);
+                        
+                        // Mostrar notificación
+                        showNotification(`✓ ${user.name} aceptó tu trabajo "${job.title}"`);
+                    }
+                }
+            });
+        }
+
+        // ==================== GESTIÓN DE USUARIOS ====================
+        function getAllUsers() {
+            const stored = localStorage.getItem('users');
+            return stored ? JSON.parse(stored) : {};
+        }
+
+        function saveUsers(users) {
+            localStorage.setItem('users', JSON.stringify(users));
+        }
+
+        function initializePreConfiguredUsers() {
+            const users = getAllUsers();
+            
+            // Solo inicializar si no hay usuarios
+            if (Object.keys(users).length > 0) return;
+
+            const preConfigured = {
+                'edrian': { name: 'Edrian', balance: 100, password: '', isBank: false, createdAt: Date.now() },
+                'lukas': { name: 'Lukas', balance: 100, password: '', isBank: false, createdAt: Date.now() },
+                'makarena': { name: 'Makarena', balance: 100, password: '', isBank: false, createdAt: Date.now() },
+                'viviana': { name: 'Viviana', balance: 100, password: '', isBank: false, createdAt: Date.now() },
+                'leon': { name: 'Leon', balance: 100, password: '', isBank: false, createdAt: Date.now() },
+                'banco': { name: 'BANCO DRC', balance: 10000, password: 'edri4n$51', isBank: true, createdAt: Date.now() }
+            };
+
+            saveUsers(preConfigured);
+        }
+
+        function refreshUserList() {
+            // Legacy helper: if the old select exists, populate it; otherwise refresh linked accounts select
+            const selectOld = document.getElementById('initialUserSelect');
+            if (selectOld) {
+                const users = getAllUsers();
+                const select = selectOld;
+                select.innerHTML = '<option value="">-- Selecciona un usuario --</option>';
+
+                for (const [id, user] of Object.entries(users)) {
+                    if (user.isBank) continue;
+                    const option = document.createElement('option');
+                    option.value = id;
+                    option.textContent = user.name;
+                    select.appendChild(option);
+                }
+                return;
+            }
+
+            renderLinkedAccountsSelect();
+        }
+
+        function setCurrentUser(userId) {
+            localStorage.setItem('currentUserId', userId);
+        }
+
+        async function loginHandler() {
+            const id = (document.getElementById('loginId') || {}).value || '';
+            const password = (document.getElementById('loginPassword') || {}).value || '';
+
+            if (!id) {
+                showAlert('Ingresa un ID', 'error');
+                return;
+            }
+
+            // Prefer Firebase login when available
+            if (window.fbLogin) {
+                try {
+                    const userDoc = await window.fbLogin(id, password);
+                    currentUser = { ...userDoc, userId: String(id) };
+                    setCurrentUser(id);
+                    saveLinkedAccount(id);
+
+                    document.getElementById('loginModal').classList.add('hidden');
+                    updateUserDisplay();
+                    loadHistory();
+                    loadMyJobs();
+                    loadAcceptedJobs();
+                    showAlert(`Bienvenido ${currentUser.name}!`, 'success');
+                } catch (err) {
+                    showAlert('Error al iniciar sesión: ' + err.message, 'error');
+                }
+                return;
+            }
+
+            // Fallback: local user system
+            const users = getAllUsers();
+            if (!users[id]) {
+                showAlert('Usuario no encontrado (local)', 'error');
+                return;
+            }
+
+            currentUser = { ...users[id], userId: id };
+            setCurrentUser(id);
+            saveLinkedAccount(id);
+
+            document.getElementById('loginModal').classList.add('hidden');
+            updateUserDisplay();
+            loadHistory();
+            loadMyJobs();
+            loadAcceptedJobs();
+        }
+
+        function switchLoginTab(tab) {
+            document.querySelectorAll('.login-tab-content').forEach(el => {
+                el.classList.remove('active');
+            });
+            document.querySelectorAll('.login-tab-btn').forEach(el => {
+                el.classList.remove('active');
+            });
+
+            document.getElementById(tab + 'UserTab').classList.add('active');
+            document.getElementById(tab + 'TabBtn').classList.add('active');
+
+            // render linked accounts when showing login
+            if (tab === 'login') renderLinkedAccountsSelect();
+        }
+
+        async function signupHandler() {
+            const id = (document.getElementById('signupId') || {}).value || '';
+            const name = (document.getElementById('signupName') || {}).value || '';
+            const password = (document.getElementById('signupPassword') || {}).value || '';
+
+            if (!/^\d{6,10}$/.test(id)) {
+                showAlert('El ID debe ser numérico (6-10 dígitos)', 'error');
+                return;
+            }
+            if (!name.trim()) {
+                showAlert('Ingresa un nombre', 'error');
+                return;
+            }
+            if (!password) {
+                showAlert('Ingresa una contraseña', 'error');
+                return;
+            }
+
+            // Prefer Firebase signup when available
+            if (window.fbSignup) {
+                try {
+                    const userDoc = await window.fbSignup(id, name, password);
+                    currentUser = { ...userDoc, userId: String(id) };
+                    setCurrentUser(id);
+                    saveLinkedAccount(id);
+
+                    document.getElementById('loginModal').classList.add('hidden');
+                    updateUserDisplay();
+                    loadHistory();
+                    loadMyJobs();
+                    loadAcceptedJobs();
+                    showAlert(`Cuenta creada: ${name}`, 'success');
+                } catch (err) {
+                    showAlert('Error al crear cuenta: ' + err.message, 'error');
+                }
+                return;
+            }
+
+            // Fallback: local creation
+            const users = getAllUsers();
+            if (users[id]) {
+                showAlert('Ese ID ya existe (local)', 'error');
+                return;
+            }
+
+            users[id] = {
+                name: name,
+                balance: 100,
+                password: password,
+                isBank: false,
+                createdAt: Date.now()
+            };
+
+            saveUsers(users);
+            currentUser = { ...users[id], userId: id };
+            setCurrentUser(id);
+            saveLinkedAccount(id);
+
+            document.getElementById('loginModal').classList.add('hidden');
+            updateUserDisplay();
+            loadHistory();
+            loadMyJobs();
+            loadAcceptedJobs();
+            showAlert(`Bienvenido ${name}!`, 'success');
+        }
+
++        // Linked accounts helpers (store simple list of IDs on device)
++        function saveLinkedAccount(id) {
++            try {
++                const key = 'linkedAccounts';
++                const list = JSON.parse(localStorage.getItem(key) || '[]');
++                const s = String(id);
++                const filtered = [s, ...list.filter(x => x !== s)].slice(0, 12);
++                localStorage.setItem(key, JSON.stringify(filtered));
++            } catch (e) { /* ignore */ }
++        }
++
++        function loadLinkedAccounts() {
++            try {
++                return JSON.parse(localStorage.getItem('linkedAccounts') || '[]');
++            } catch (e) {
++                return [];
++            }
++        }
++
++        function renderLinkedAccountsSelect() {
++            const sel = document.getElementById('linkedAccountsSelect');
++            if (!sel) return;
++            sel.innerHTML = '';
++            const list = loadLinkedAccounts();
++            if (list.length === 0) {
++                const opt = document.createElement('option');
++                opt.value = '';
++                opt.textContent = '-- (sin cuentas ligadas) --';
++                sel.appendChild(opt);
++                return;
++            }
++            for (const id of list) {
++                const opt = document.createElement('option');
++                opt.value = id;
++                opt.textContent = id;
++                sel.appendChild(opt);
++            }
++        }
++
++        function useLinkedAccount() {
++            const sel = document.getElementById('linkedAccountsSelect');
++            if (!sel) return;
++            const id = sel.value;
++            if (!id) return;
++            const input = document.getElementById('loginId');
++            if (input) input.value = id;
++        }
+*** End Patch
+        // ==================== UI ACTUALIZACIÓN ====================
+        function updateUserDisplay() {
+            if (!currentUser) return;
+            document.getElementById('userBalance').textContent = `$${currentUser.balance.toFixed(2)}`;
+            document.getElementById('userName').textContent = currentUser.name;
+
+            // Mostrar/ocultar botón de admin según si es admin
+            if (currentUser.isBank) {
+                document.getElementById('bankAdminBtn').style.display = 'none';
+                document.getElementById('logoutAdminBtn').style.display = 'block';
+            } else {
+                document.getElementById('bankAdminBtn').style.display = 'block';
+                document.getElementById('logoutAdminBtn').style.display = 'none';
+            }
+        }
+
+        function switchTab(tabId) {
+            // Detener escaneo si está activo
+            if (jobScanningActive) stopJobScanning();
+            if (transferScanningActive) stopTransferScanning();
+
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+            document.getElementById(tabId).classList.add('active');
+            event.target.classList.add('active');
+
+            // Recargar datos según la pestaña
+            if (tabId === 'jobs-tab') {
+                loadMyJobs();
+                loadAcceptedJobs();
+            } else if (tabId === 'history-tab') {
+                loadHistory();
+            }
+        }
+
+        function showAlert(message, type = 'info') {
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            document.body.appendChild(alert);
+
+            setTimeout(() => {
+                alert.style.animation = 'slideIn 0.3s ease-out reverse';
+                setTimeout(() => alert.remove(), 300);
+            }, 3000);
+        }
+
+        function showNotification(message) {
+            document.getElementById('notificationMessage').textContent = message;
+            document.getElementById('jobNotificationModal').classList.add('active');
+        }
+
+        function closeNotification() {
+            document.getElementById('jobNotificationModal').classList.remove('active');
+        }
+
+        // ==================== GESTIÓN DE TRABAJOS ====================
+        function createJob() {
+            if (!currentUser) return;
+
+            const title = document.getElementById('jobTitle').value.trim();
+            const desc = document.getElementById('jobDesc').value.trim();
+            const amount = parseFloat(document.getElementById('jobAmount').value);
+
+            if (!title || !desc || !amount || amount <= 0) {
+                showAlert('Completa todos los campos correctamente', 'error');
+                return;
+            }
+
+            if (currentUser.balance < amount) {
+                showAlert('No tienes saldo suficiente', 'error');
+                return;
+            }
+
+            const jobId = 'job_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            const jobData = {
+                type: 'drc_job',
+                jobId: jobId,
+                creator: currentUser.userId,
+                creatorName: currentUser.name,
+                title: title,
+                description: desc,
+                amount: amount,
+                createdAt: Date.now(),
+                status: 'available'
+            };
+
+            const myJobs = getUserJobs(currentUser.userId);
+            myJobs.push(jobData);
+            saveUserJobs(currentUser.userId, myJobs);
+
+            // Generar y mostrar QR
+            generateJobQR(jobData);
+
+            document.getElementById('jobTitle').value = '';
+            document.getElementById('jobDesc').value = '';
+            document.getElementById('jobAmount').value = '';
+
+            showAlert('Trabajo creado! Comparte el QR', 'success');
+            loadMyJobs();
+        }
+
+        function generateJobQR(jobData) {
+            // Marcar el trabajo como activo (para uso de un solo QR)
+            jobData.active = true;
+
+            const qrContainer = document.createElement('div');
+            qrContainer.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); z-index: 2000;';
+            
+            const title = document.createElement('div');
+            title.textContent = 'Tu QR de Trabajo (Un solo uso)';
+            title.style.cssText = 'font-weight: bold; margin-bottom: 5px; text-align: center;';
+            qrContainer.appendChild(title);
+
+            const subtitle = document.createElement('div');
+            subtitle.textContent = 'Se deducirá cuando alguien lo escanee';
+            subtitle.style.cssText = 'font-size: 12px; color: #999; margin-bottom: 15px; text-align: center;';
+            qrContainer.appendChild(subtitle);
+
+            const qrDiv = document.createElement('div');
+            qrContainer.appendChild(qrDiv);
+
+            const download = document.createElement('button');
+            download.textContent = 'Descargar QR';
+            download.className = 'button-primary';
+            download.style.cssText = 'margin-top: 15px; width: 100%;';
+            download.onclick = () => {
+                downloadJobQR(jobData, qrDiv);
+            };
+            qrContainer.appendChild(download);
+
+            const close = document.createElement('button');
+            close.textContent = 'Cerrar';
+            close.className = 'button-secondary';
+            close.style.cssText = 'margin-top: 10px; width: 100%;';
+            close.onclick = () => qrContainer.remove();
+            qrContainer.appendChild(close);
+
+            new QRCode(qrDiv, {
+                text: JSON.stringify(jobData),
+                width: 250,
+                height: 250
+            });
+
+            document.body.appendChild(qrContainer);
+        }
+
+        function downloadJobQR(jobData, qrElement) {
+            const canvas = qrElement.querySelector('canvas');
+            if (canvas) {
+                const link = document.createElement('a');
+                link.href = canvas.toDataURL();
+                link.download = `trabajo_${jobData.jobId}.png`;
+                link.click();
+            }
+        }
+
+        function loadMyJobs() {
+            // Reutilizado para mostrar la sección de impuestos
+            renderTaxSection();
+        }
+
+        function showJobQR(jobId) {
+            if (!currentUser) return showAlert('Debes estar logueado', 'error');
+
+            // Intentar encontrar el trabajo en mis trabajos
+            let job = getUserJobs(currentUser.userId).find(j => j.jobId === jobId);
+
+            // Si no está en mis trabajos, buscar en todos los usuarios (por seguridad)
+            if (!job) {
+                const users = getAllUsers();
+                for (const [uid] of Object.entries(users)) {
+                    const jobs = getUserJobs(uid);
+                    const found = jobs.find(j => j.jobId === jobId);
+                    if (found) {
+                        job = found;
+                        break;
+                    }
+                }
+            }
+
+            if (!job) return showAlert('Trabajo no encontrado', 'error');
+
+            // Solo el creador puede mostrar el QR del trabajo
+            if (job.creator !== currentUser.userId) return showAlert('Solo el creador puede mostrar el QR', 'error');
+
+            try {
+                generateJobQR(job);
+            } catch (err) {
+                console.error('Error generando QR del trabajo:', err);
+                showAlert('No se pudo generar el QR del trabajo', 'error');
+            }
+        }
+
+        function loadAcceptedJobs() {
+            // Para compatibilidad, también refresca la sección de impuestos
+            renderTaxSection();
+        }
+
+        function startJobScanning() {
+            if (jobScanningActive) return;
+
+            const video = document.getElementById('jobCamera');
+            if (!video) {
+                showAlert('Elemento de video no encontrado', 'error');
+                return;
+            }
+
+            jobScanningActive = true;
+            showAlert('Abriendo cámara...', 'info');
+
+            navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment' }
+            }).then(stream => {
+                jobVideoStream = stream;
+                video.srcObject = stream;
+                video.play();
+                document.getElementById('jobCameraContainer').classList.add('active');
+                showAlert('Cámara abierta - Escanea un QR', 'success');
+
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                let framesScanned = 0;
+
+                const scanFrame = () => {
+                    if (!jobScanningActive) return;
+
+                    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        context.drawImage(video, 0, 0);
+
+                        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                        const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+                        framesScanned++;
+
+                        if (code) {
+                            console.log('QR detectado:', code.data);
+                            handleJobQRScan(code.data);
+                            stopJobScanning();
+                            return;
+                        }
+
+                        if (framesScanned % 30 === 0) {
+                            console.log('Escaneando... frames:', framesScanned);
+                        }
+                    }
+
+                    requestAnimationFrame(scanFrame);
+                };
+
+                scanFrame();
+            }).catch(err => {
+                console.error('Error de cámara:', err);
+                showAlert('No se pudo acceder a la cámara: ' + err.message, 'error');
+                jobScanningActive = false;
+            });
+        }
+
+        function stopJobScanning() {
+            jobScanningActive = false;
+            document.getElementById('jobCameraContainer').classList.remove('active');
+
+            if (jobVideoStream) {
+                jobVideoStream.getTracks().forEach(track => track.stop());
+                jobVideoStream = null;
+            }
+        }
+
+        function handleJobQRScan(qrData) {
+            try {
+                const data = JSON.parse(qrData);
+
+                if (data.type !== 'drc_job' || !data.jobId) {
+                    showAlert('QR inválido o no es un trabajo', 'error');
+                    return;
+                }
+
+                // No deducir aquí. La reserva (descuento) se realizará
+                // cuando el usuario confirme aceptar el trabajo (acceptJob).
+                // Solo validar formato y estado y mostrar confirmación.
+
+                // Buscar si alguien ya aceptó este trabajo
+                const users = getAllUsers();
+                for (const [userId, user] of Object.entries(users)) {
+                    if (user.isBank) continue;
+                    const acceptedJobs = getAcceptedJobs(userId);
+                    if (acceptedJobs.find(j => j.jobId === data.jobId)) {
+                        showAlert('Este trabajo ya fue aceptado por alguien más', 'error');
+                        return;
+                    }
+                }
+
+                pendingJob = data;
+                showJobConfirmation(data);
+
+            } catch (err) {
+                showAlert('Error al decodificar QR: ' + err.message, 'error');
+            }
+        }
+
+        function showJobConfirmation(jobData) {
+            document.getElementById('jobConfirmTitle').textContent = jobData.title;
+            document.getElementById('jobConfirmDesc').textContent = jobData.description;
+            document.getElementById('jobConfirmAmount').textContent = `$${jobData.amount.toFixed(2)}`;
+            document.getElementById('jobConfirmCreator').textContent = jobData.creatorName;
+            document.getElementById('jobConfirmModal').classList.add('active');
+        }
+
+        function acceptJob() {
+            if (!pendingJob || !currentUser) return;
+
+            const acceptedJobs = getAcceptedJobs(currentUser.userId);
+
+            if (acceptedJobs.find(j => j.jobId === pendingJob.jobId)) {
+                showAlert('Ya aceptaste este trabajo', 'error');
+                document.getElementById('jobConfirmModal').classList.remove('active');
+                return;
+            }
+
+            // Verificar que nadie más ya lo aceptó
+            const users = getAllUsers();
+            for (const [userId, user] of Object.entries(users)) {
+                if (user.isBank || userId === currentUser.userId) continue;
+                const otherAccepted = getAcceptedJobs(userId);
+                if (otherAccepted.find(j => j.jobId === pendingJob.jobId)) {
+                    showAlert('Este trabajo ya fue aceptado por otra persona', 'error');
+                    document.getElementById('jobConfirmModal').classList.remove('active');
+                    return;
+                }
+            }
+
+            // Antes de aceptar, reservar el dinero del creador
+            const creator = users[pendingJob.creator];
+            if (!creator) {
+                showAlert('Usuario creador no encontrado', 'error');
+                document.getElementById('jobConfirmModal').classList.remove('active');
+                pendingJob = null;
+                return;
+            }
+
+            if (creator.balance < pendingJob.amount) {
+                showAlert('El creador ya no tiene saldo suficiente', 'error');
+                document.getElementById('jobConfirmModal').classList.remove('active');
+                pendingJob = null;
+                return;
+            }
+
+            // Deducir (reservar) del creador
+            creator.balance -= pendingJob.amount;
+            users[pendingJob.creator] = creator;
+            saveUsers(users);
+
+            // Marcar el trabajo en la lista del creador como reservado/activo=false
+            const creatorJobs = getUserJobs(pendingJob.creator);
+            const idx = creatorJobs.findIndex(j => j.jobId === pendingJob.jobId);
+            if (idx !== -1) {
+                creatorJobs[idx].active = false;
+                creatorJobs[idx].reservedBy = currentUser.userId;
+                saveUserJobs(pendingJob.creator, creatorJobs);
+            }
+
+            // Agregar al trabajador en accepted
+            acceptedJobs.push(pendingJob);
+            saveAcceptedJobs(currentUser.userId, acceptedJobs);
+
+            // Registrar en historial del creador como reserva (salida)
+            const creatorHistory = getUserHistory(pendingJob.creator);
+            creatorHistory.push({
+                type: 'out',
+                amount: pendingJob.amount,
+                toUser: currentUser.userId,
+                toName: currentUser.name,
+                reason: 'Reserva por trabajo aceptado: ' + pendingJob.title,
+                txId: pendingJob.jobId,
+                timestamp: Date.now()
+            });
+            saveUserHistory(pendingJob.creator, creatorHistory);
+
+            document.getElementById('jobConfirmModal').classList.remove('active');
+            pendingJob = null;
+
+            showAlert('¡Trabajo aceptado! Complétalo para recibir el pago', 'success');
+            loadAcceptedJobs();
+        }
+
+        function rejectJob() {
+            document.getElementById('jobConfirmModal').classList.remove('active');
+            pendingJob = null;
+            showAlert('Trabajo rechazado', 'info');
+        }
+
+        function completeJob(jobId) {
+            if (!currentUser) return;
+
+            const acceptedJobs = getAcceptedJobs(currentUser.userId);
+            const job = acceptedJobs.find(j => j.jobId === jobId);
+
+            if (!job) return;
+
+            const users = getAllUsers();
+            const creator = users[job.creator];
+
+            if (!creator) {
+                showAlert('El creador del trabajo no existe', 'error');
+                return;
+            }
+
+            // El dinero ya fue deducido cuando se aceptó el trabajo
+            // Solo agregar al que completó el trabajo
+            currentUser.balance += job.amount;
+
+            users[currentUser.userId] = currentUser;
+            saveUsers(users);
+
+            // Registrar en historial del receptor (trabajo completado)
+            const history = getUserHistory(currentUser.userId);
+            history.push({
+                type: 'in',
+                amount: job.amount,
+                fromUser: job.creator,
+                fromName: job.creatorName,
+                reason: 'Trabajo completado: ' + job.title,
+                txId: jobId,
+                timestamp: Date.now()
+            });
+            saveUserHistory(currentUser.userId, history);
+
+
+            // Eliminar trabajo de aceptados
+            const updatedAccepted = acceptedJobs.filter(j => j.jobId !== jobId);
+            saveAcceptedJobs(currentUser.userId, updatedAccepted);
+
+            updateUserDisplay();
+            loadAcceptedJobs();
+            loadHistory();
+
+            showAlert(`✓ Trabajo completado! Recibiste $${job.amount.toFixed(2)}`, 'success');
+        }
+
+        // ==================== GESTIÓN DE TRANSFERENCIAS ====================
+        function updateTransferPreview() {
+            const amount = parseFloat(document.getElementById('transferAmount').value) || 0;
+            const preview = document.getElementById('transferPreview');
+            const previewAmount = document.getElementById('previewAmount');
+
+            if (amount > 0) {
+                previewAmount.textContent = `$${amount.toFixed(2)}`;
+                preview.style.display = 'block';
+            } else {
+                preview.style.display = 'none';
+            }
+        }
+
+        function generateQR() {
+            if (!currentUser) {
+                showAlert('Debes estar logueado', 'error');
+                return;
+            }
+
+            const amount = parseFloat(document.getElementById('transferAmount').value);
+            if (!amount || amount <= 0 || amount > currentUser.balance) {
+                showAlert('Ingresa un monto válido y que no exceda tu saldo', 'error');
+                return;
+            }
+
+            // Deducir dinero inmediatamente cuando se genera el QR
+            currentUser.balance -= amount;
+            const users = getAllUsers();
+            users[currentUser.userId] = currentUser;
+            saveUsers(users);
+
+            const transferData = {
+                type: 'drc_transfer',
+                from: currentUser.userId,
+                amount: amount,
+                id: 'txn_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                ts: Date.now(),
+                used: false
+            };
+
+            // Guardar transferencias pendientes
+            const pendingTransfers = JSON.parse(localStorage.getItem('pendingTransfers') || '[]');
+            pendingTransfers.push(transferData);
+            localStorage.setItem('pendingTransfers', JSON.stringify(pendingTransfers));
+
+            // Limpiar QR anterior
+            document.getElementById('qrcode').innerHTML = '';
+
+            // Generar QR
+            new QRCode(document.getElementById('qrcode'), {
+                text: JSON.stringify(transferData),
+                width: 250,
+                height: 250
+            });
+
+            updateUserDisplay();
+            document.getElementById('transferAmount').value = '';
+            document.getElementById('transferPreview').style.display = 'none';
+
+            showAlert(`QR generado! Se deducieron $${amount.toFixed(2)} de tu cuenta. Comparte el QR.`, 'success');
+        }
+
+        function downloadQR() {
+            const canvas = document.querySelector('#qrcode canvas');
+            if (canvas) {
+                const link = document.createElement('a');
+                link.href = canvas.toDataURL();
+                link.download = 'transferencia_qr.png';
+                link.click();
+            }
+        }
+
+        function startTransferScanning() {
+            if (transferScanningActive) return;
+
+            const video = document.getElementById('transferCamera');
+            if (!video) {
+                showAlert('Elemento de video no encontrado', 'error');
+                return;
+            }
+
+            transferScanningActive = true;
+            showAlert('Abriendo cámara...', 'info');
+
+            navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment' }
+            }).then(stream => {
+                transferVideoStream = stream;
+                video.srcObject = stream;
+                video.play();
+                document.getElementById('transferCameraContainer').classList.add('active');
+                showAlert('Cámara abierta - Escanea un QR', 'success');
+
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                let framesScanned = 0;
+
+                const scanFrame = () => {
+                    if (!transferScanningActive) return;
+
+                    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        context.drawImage(video, 0, 0);
+
+                        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                        const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+                        framesScanned++;
+
+                        if (code) {
+                            console.log('Transfer QR detectado:', code.data);
+                            handleTransferQRScan(code.data);
+                            stopTransferScanning();
+                            return;
+                        }
+
+                        if (framesScanned % 30 === 0) {
+                            console.log('Escaneando transferencia... frames:', framesScanned);
+                        }
+                    }
+
+                    requestAnimationFrame(scanFrame);
+                };
+
+                scanFrame();
+            }).catch(err => {
+                console.error('Error de cámara:', err);
+                showAlert('No se pudo acceder a la cámara: ' + err.message, 'error');
+                transferScanningActive = false;
+            });
+        }
+
+        function stopTransferScanning() {
+            transferScanningActive = false;
+            document.getElementById('transferCameraContainer').classList.remove('active');
+
+            if (transferVideoStream) {
+                transferVideoStream.getTracks().forEach(track => track.stop());
+                transferVideoStream = null;
+            }
+        }
+
+        function handleTransferQRScan(qrData) {
+            try {
+                const data = JSON.parse(qrData);
+
+                if (data.type !== 'drc_transfer' || !data.from || typeof data.amount !== 'number') {
+                    showAlert('QR inválido o no es una transferencia', 'error');
+                    return;
+                }
+
+                if (data.amount <= 0) {
+                    showAlert('Monto inválido en el QR', 'error');
+                    return;
+                }
+
+                const users = getAllUsers();
+                if (!users[data.from]) {
+                    showAlert('Usuario emisor no encontrado', 'error');
+                    return;
+                }
+
+                pendingTransfer = data;
+                showTransferConfirmation(data, users[data.from].name);
+
+            } catch (err) {
+                showAlert('Error al decodificar QR: ' + err.message, 'error');
+            }
+        }
+
+        function showTransferConfirmation(transferData, senderName) {
+            document.getElementById('modalAmount').textContent = `$${transferData.amount.toFixed(2)}`;
+            document.getElementById('modalFromUser').textContent = senderName;
+            document.getElementById('modalToUser').textContent = currentUser.name;
+            document.getElementById('confirmModal').classList.add('active');
+        }
+
+        function acceptTransfer() {
+            if (!pendingTransfer || !currentUser) return;
+
+            const users = getAllUsers();
+            const sender = users[pendingTransfer.from];
+
+            if (!sender) {
+                showAlert('Usuario emisor no encontrado', 'error');
+                document.getElementById('confirmModal').classList.remove('active');
+                return;
+            }
+
+            // Marcar el QR como usado
+            const pendingTransfers = JSON.parse(localStorage.getItem('pendingTransfers') || '[]');
+            console.log('pendingTransfers (local):', pendingTransfers);
+            console.log('pendingTransfer (scanned):', pendingTransfer);
+
+            let transferIndex = pendingTransfers.findIndex(t => t.id === pendingTransfer.id);
+
+            // Fallback: si no se encuentra por id, intentar emparejar por from+amount+ts cercano (por si el storage fue modificado)
+            if (transferIndex === -1) {
+                transferIndex = pendingTransfers.findIndex(t => {
+                    try {
+                        const sameFrom = t.from === pendingTransfer.from;
+                        const sameAmount = Number(t.amount) === Number(pendingTransfer.amount);
+                        const tsDiff = Math.abs((Number(t.ts) || 0) - (Number(pendingTransfer.ts) || 0));
+                        return sameFrom && sameAmount && tsDiff < 60000; // 60s
+                    } catch (e) {
+                        return false;
+                    }
+                });
+            }
+
+            if (transferIndex === -1) {
+                // En lugar de fallar inmediatamente, ofrecer forzar aceptación
+                document.getElementById('confirmModal').classList.remove('active');
+                showForceAccept(pendingTransfer);
+                return;
+            }
+
+            if (pendingTransfers[transferIndex].used) {
+                showAlert('Este QR ya fue utilizado', 'error');
+                document.getElementById('confirmModal').classList.remove('active');
+                return;
+            }
+
+            // Marcar como usado
+            pendingTransfers[transferIndex].used = true;
+            localStorage.setItem('pendingTransfers', JSON.stringify(pendingTransfers));
+
+            // Ya se dedujo del emisor cuando se generó el QR
+            // Solo agregar al receptor ahora
+            currentUser.balance += pendingTransfer.amount;
+
+            // Guardar receptor
+            users[currentUser.userId] = currentUser;
+            saveUsers(users);
+
+            // Registrar en historial del receptor (entrada)
+            const history = getUserHistory(currentUser.userId);
+            history.push({
+                type: 'in',
+                amount: pendingTransfer.amount,
+                fromUser: pendingTransfer.from,
+                fromName: sender.name,
+                txId: pendingTransfer.id,
+                timestamp: Date.now()
+            });
+            saveUserHistory(currentUser.userId, history);
+
+            // Registrar en historial del emisor (salida)
+            const senderHistory = getUserHistory(pendingTransfer.from);
+            senderHistory.push({
+                type: 'out',
+                amount: pendingTransfer.amount,
+                toUser: currentUser.userId,
+                toName: currentUser.name,
+                txId: pendingTransfer.id,
+                timestamp: Date.now()
+            });
+            saveUserHistory(pendingTransfer.from, senderHistory);
+
+            updateUserDisplay();
+            loadHistory();
+
+            document.getElementById('confirmModal').classList.remove('active');
+            const amount = pendingTransfer.amount;
+            const senderName = sender.name;
+            pendingTransfer = null;
+
+            showAlert(`✓ Transferencia de $${amount.toFixed(2)} recibida de ${senderName}`, 'success');
+        }
+
+        function rejectTransfer() {
+            document.getElementById('confirmModal').classList.remove('active');
+            pendingTransfer = null;
+            showAlert('Transferencia rechazada', 'info');
+        }
+
+        // Forzar aceptación cuando no se encuentra el registro en localStorage
+        function showForceAccept(transferData) {
+            pendingTransfer = transferData;
+            document.getElementById('forceAcceptText').textContent = `No se encontró registro local de la transferencia de $${transferData.amount.toFixed(2)} desde ${transferData.from}. Puedes forzar la aceptación (esto creará un registro local y creditara tu cuenta).`;
+            document.getElementById('forceAcceptModal').classList.add('active');
+        }
+
+        function closeForceAccept() {
+            document.getElementById('forceAcceptModal').classList.remove('active');
+            pendingTransfer = null;
+        }
+
+        function forceAcceptTransfer() {
+            if (!pendingTransfer || !currentUser) return;
+
+            const users = getAllUsers();
+
+            // Marcar un registro local como usado para evitar reuso en este dispositivo
+            const pendingTransfers = JSON.parse(localStorage.getItem('pendingTransfers') || '[]');
+            try {
+                const txId = pendingTransfer.id || ('txn_forced_' + Date.now());
+                const amount = Number(pendingTransfer.amount) || 0;
+                const record = { ...pendingTransfer, id: txId, used: true };
+                pendingTransfers.push(record);
+                localStorage.setItem('pendingTransfers', JSON.stringify(pendingTransfers));
+
+                // Creditamos al receptor
+                currentUser.balance += amount;
+                users[currentUser.userId] = currentUser;
+                saveUsers(users);
+
+                // Registrar historial del receptor (entrada)
+                const history = getUserHistory(currentUser.userId);
+                history.push({
+                    type: 'in',
+                    amount: amount,
+                    fromUser: pendingTransfer.from,
+                    fromName: (users[pendingTransfer.from] && users[pendingTransfer.from].name) || pendingTransfer.from,
+                    txId: txId,
+                    timestamp: Date.now()
+                });
+                saveUserHistory(currentUser.userId, history);
+
+                // Si el emisor existe en este dispositivo, registrar su historial de salida también
+                if (users[pendingTransfer.from]) {
+                    const senderHistory = getUserHistory(pendingTransfer.from);
+                    senderHistory.push({
+                        type: 'out',
+                        amount: amount,
+                        toUser: currentUser.userId,
+                        toName: currentUser.name,
+                        txId: txId,
+                        timestamp: Date.now()
+                    });
+                    saveUserHistory(pendingTransfer.from, senderHistory);
+                }
+
+                document.getElementById('forceAcceptModal').classList.remove('active');
+                pendingTransfer = null;
+
+                updateUserDisplay();
+                loadHistory();
+
+                showAlert(`✓ Transferencia forzada: recibiste $${amount.toFixed(2)}`, 'success');
+            } catch (e) {
+                console.error('Error forzando aceptación:', e);
+                showAlert('Error al forzar la aceptación', 'error');
+            }
+        }
+
+        // ==================== HISTORIAL ====================
+        function loadHistory() {
+            if (!currentUser) return;
+
+            const history = getUserHistory(currentUser.userId);
+            const container = document.getElementById('historyContainer');
+
+            if (history.length === 0) {
+                container.innerHTML = '<div class="history-empty">Sin transacciones</div>';
+                return;
+            }
+
+            container.innerHTML = '';
+            const sortedHistory = [...history].reverse();
+
+            sortedHistory.forEach(item => {
+                const date = new Date(item.timestamp).toLocaleDateString('es-ES', { 
+                    year: 'numeric', 
+                    month: 'short', 
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+
+                const div = document.createElement('div');
+                div.className = 'history-item';
+                
+                let text = '';
+                if (item.type === 'in') {
+                    text = `<span class="history-in">+$${item.amount.toFixed(2)}</span> de ${item.fromName}`;
+                } else {
+                    text = `<span class="history-out">-$${item.amount.toFixed(2)}</span> a ${item.toName}`;
+                }
+
+                div.innerHTML = `<div>${text}</div><div style="font-size: 11px; color: #999;">${date}</div>`;
+                container.appendChild(div);
+            });
+        }
+
+        // ==================== BANCO ADMIN ====================
+        function openBankAdmin() {
+            document.getElementById('bankModal').classList.add('active');
+        }
+
+        function closeBankAdmin() {
+            document.getElementById('bankModal').classList.remove('active');
+            document.getElementById('bankPassword').value = '';
+        }
+
+        function loginBankAdmin() {
+            const password = document.getElementById('bankPassword').value;
+
+            if (!password) {
+                showAlert('Ingresa la contraseña', 'error');
+                return;
+            }
+
+            if (password !== 'edri4n$51') {
+                showAlert('Contraseña incorrecta', 'error');
+                return;
+            }
+
+            const users = getAllUsers();
+            currentUser = { ...users['banco'], userId: 'banco' };
+            setCurrentUser('banco');
+
+            closeBankAdmin();
+            updateUserDisplay();
+            loadHistory();
+            loadMyJobs();
+
+            // Mostrar botón de salir y ocultar el de acceso
+            document.getElementById('bankAdminBtn').style.display = 'none';
+            document.getElementById('logoutAdminBtn').style.display = 'block';
+
+            showAlert('Bienvenido administrador', 'success');
+        }
+
+        function logoutAdmin() {
+            const users = getAllUsers();
+            const firstUserId = Object.keys(users).find(id => !users[id].isBank);
+            
+            if (firstUserId) {
+                currentUser = { ...users[firstUserId], userId: firstUserId };
+                setCurrentUser(firstUserId);
+            } else {
+                localStorage.removeItem('currentUserId');
+                currentUser = null;
+            }
+
+            updateUserDisplay();
+            loadHistory();
+            loadMyJobs();
+            loadAcceptedJobs();
+
+            // Mostrar botón de acceso y ocultar el de salir
+            document.getElementById('bankAdminBtn').style.display = 'block';
+            document.getElementById('logoutAdminBtn').style.display = 'none';
+
+            showAlert('Saliste del modo admin', 'info');
+        }
+
+        // ==================== ALMACENAMIENTO LOCAL ====================
+        function getUserHistory(userId) {
+            const key = `history_${userId}`;
+            const stored = localStorage.getItem(key);
+            return stored ? JSON.parse(stored) : [];
+        }
+
+        function saveUserHistory(userId, history) {
+            const key = `history_${userId}`;
+            localStorage.setItem(key, JSON.stringify(history));
+        }
+
+        function getUserJobs(userId) {
+            const key = `jobs_${userId}`;
+            const stored = localStorage.getItem(key);
+            return stored ? JSON.parse(stored) : [];
+        }
+
+        function saveUserJobs(userId, jobs) {
+            const key = `jobs_${userId}`;
+            localStorage.setItem(key, JSON.stringify(jobs));
+        }
+
+        function getAcceptedJobs(userId) {
+            const key = `accepted_jobs_${userId}`;
+            const stored = localStorage.getItem(key);
+            return stored ? JSON.parse(stored) : [];
+        }
+
+        function saveAcceptedJobs(userId, jobs) {
+            const key = `accepted_jobs_${userId}`;
+            localStorage.setItem(key, JSON.stringify(jobs));
+        }
+
+        // ==================== IMPUESTOS ====================
+        const TAX_BASE = 8; // 8 DRC
+
+        function getUserTax(userId) {
+            const key = `tax_${userId}`;
+            const stored = localStorage.getItem(key);
+            if (stored) return JSON.parse(stored);
+
+            // Si no existe, crear para el siguiente 1ro de mes
+            const dueDate = getNextFirstOfMonth(Date.now());
+            const tax = {
+                base: TAX_BASE,
+                dueDate: dueDate,
+                lastPaidPeriod: null,
+                lastPaidAt: null,
+                lastPaidAmount: 0
+            };
+            localStorage.setItem(key, JSON.stringify(tax));
+            return tax;
+        }
+
+        function saveUserTax(userId, tax) {
+            const key = `tax_${userId}`;
+            localStorage.setItem(key, JSON.stringify(tax));
+        }
+
+        function getNextFirstOfMonth(ts) {
+            const d = new Date(ts);
+            const year = d.getFullYear();
+            const month = d.getMonth();
+            // next month
+            const next = new Date(year, month + 1, 1);
+            next.setHours(0,0,0,0);
+            return next.getTime();
+        }
+
+        function computeOwedForPeriod(tax, nowTs) {
+            // period corresponds to tax.dueDate month/year
+            const due = new Date(tax.dueDate);
+            due.setHours(0,0,0,0);
+            const now = new Date(nowTs);
+            now.setHours(0,0,0,0);
+            const msPerDay = 24 * 60 * 60 * 1000;
+            const daysLate = Math.max(0, Math.floor((now - due) / msPerDay));
+            const interest = daysLate * (tax.base * 0.10); // interés simple 10% por día sobre base
+            const total = tax.base + interest;
+            return { daysLate, interest, total };
+        }
+
+        function periodIdFromDate(ts) {
+            const d = new Date(ts);
+            return `${d.getFullYear()}-${d.getMonth()+1}`;
+        }
+
+        // Intentar aplicar cobro automático el día 1 (si hay saldo)
+        function checkAndApplyTaxes() {
+            const users = getAllUsers();
+            const now = Date.now();
+
+            for (const [uid, user] of Object.entries(users)) {
+                if (user.isBank) continue;
+                const tax = getUserTax(uid);
+                const periodId = periodIdFromDate(tax.dueDate);
+
+                // Si ya fue pagado para ese periodo, saltar
+                if (tax.lastPaidPeriod === periodId) continue;
+
+                // Si es día de cobro o pasó, intentar cobrar la base automáticamente
+                if (now >= tax.dueDate) {
+                    // incluir tarifas de préstamos pendientes en el cobro
+                    const loanFees = sumPendingLoanFees(uid);
+                    const owedInfo = computeOwedForPeriod(tax, now);
+                    const totalDue = owedInfo.total + loanFees;
+
+                    if (user.balance >= totalDue) {
+                        // Cobrar automáticamente total (impuesto + tarifas)
+                        user.balance -= totalDue;
+                        users[uid] = user;
+                        saveUsers(users);
+
+                        // Registrar pago en tax
+                        tax.lastPaidPeriod = periodId;
+                        tax.lastPaidAt = Date.now();
+                        tax.lastPaidAmount = owedInfo.total;
+                        // preparar siguiente vencimiento
+                        tax.dueDate = getNextFirstOfMonth(tax.dueDate);
+                        saveUserTax(uid, tax);
+
+                        // Historial del impuesto
+                        const h = getUserHistory(uid);
+                        h.push({ type: 'out', amount: owedInfo.total, toUser: 'banco', toName: 'Impuesto DRC', reason: `Impuesto mensual ${periodId}`, txId: `tax_${periodId}`, timestamp: Date.now() });
+                        // Si había tarifas de préstamo, marcarlas y registrar
+                        if (loanFees > 0) {
+                            const loans = getUserLoans(uid);
+                            loans.forEach(l => {
+                                if (!l.feeCharged) {
+                                    l.feeCharged = true;
+                                    h.push({ type: 'out', amount: l.fee, toUser: 'banco', toName: 'Tarifa crédito', reason: `Tarifa préstamo ${l.loanId}`, txId: `loanfee_${l.loanId}`, timestamp: Date.now() });
+                                }
+                            });
+                            saveUserLoans(uid, loans);
+                        }
+
+                        saveUserHistory(uid, h);
+                    } else {
+                        // no enough balance, will accrue interest; just save tax as is
+                        saveUserTax(uid, tax);
+                    }
+                }
+
+                // Procesar cuotas de préstamos vencidas (si hay saldo suficiente se cobran automáticamente)
+                processLoansForUser(uid, user);
+            }
+        }
+
+        function renderTaxSection() {
+            if (!currentUser) return;
+            const container = document.getElementById('taxContainer');
+            container.innerHTML = '';
+
+            const tax = getUserTax(currentUser.userId);
+            const now = Date.now();
+            const periodId = periodIdFromDate(tax.dueDate);
+            const owedInfo = computeOwedForPeriod(tax, now);
+
+            const dueDateFormatted = new Date(tax.dueDate).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' });
+
+            const summary = document.createElement('div');
+            summary.className = 'qr-container';
+            summary.innerHTML = `
+                <div style="margin-bottom:8px; font-weight:600;">Estado del impuesto</div>
+                <div>Periodo: <strong>${periodId}</strong></div>
+                <div>Vencimiento: <strong>${dueDateFormatted}</strong></div>
+                <div>Monto base: <strong>$${tax.base.toFixed(2)}</strong></div>
+            `;
+
+            // sumar tarifas pendientes de préstamos para mostrar en UI
+            const loanFeesSum = sumPendingLoanFees(currentUser.userId);
+
+            if (tax.lastPaidPeriod === periodId) {
+                summary.innerHTML += `<div style="margin-top:10px; color:green;">✓ Pagado para este periodo (monto: $${tax.lastPaidAmount.toFixed(2)})</div>`;
+                summary.innerHTML += `<button class="button-secondary" style="margin-top:12px; width:100%;" onclick="showAlert('Próximo vencimiento: '+ new Date(${tax.dueDate}).toLocaleDateString('es-ES'), 'info')">Ver próximo vencimiento</button>`;
+            } else {
+                // No pagado para este periodo
+                if (Date.now() < tax.dueDate) {
+                    // antes del vencimiento: permitir pago anticipado
+                    summary.innerHTML += `<div style="margin-top:10px; color:#333;">Puedes pagar antes para evitar intereses.</div>`;
+                    summary.innerHTML += `<div style="margin-top:8px; font-size:13px; color:#666;">Tarifa de préstamos pendiente: $${loanFeesSum.toFixed(2)}</div>`;
+                    summary.innerHTML += `<button class="button-primary" style="margin-top:12px; width:100%;" onclick="payTax(false)">Pagar ahora $${(tax.base + loanFeesSum).toFixed(2)}</button>`;
+                } else {
+                    // vencido o en día de cobro
+                    const txt = `<div style=\"margin-top:10px; color:#a00;\">Vencido: ${owedInfo.daysLate} días de retraso. Interés: $${owedInfo.interest.toFixed(2)}. Total adeudado: <strong>$${owedInfo.total.toFixed(2)}</strong></div>`;
+                    summary.innerHTML += txt;
+                    summary.innerHTML += `<div style="margin-top:8px; font-size:13px; color:#666;">Tarifa de préstamos pendiente: $${loanFeesSum.toFixed(2)}</div>`;
+                    summary.innerHTML += `<button class="button-primary" style="margin-top:12px; width:100%;" onclick="payTax(true)">Pagar total adeudado $${(owedInfo.total + loanFeesSum).toFixed(2)}</button>`;
+                }
+            }
+            container.appendChild(summary);
+
+            // Mostrar préstamos y formulario
+            renderLoansInTaxSection(container);
+        }
+
+        function payTax(late) {
+            if (!currentUser) return;
+            const tax = getUserTax(currentUser.userId);
+            const now = Date.now();
+            const periodId = periodIdFromDate(tax.dueDate);
+
+            // recalcular adeudo
+            const owedInfo = computeOwedForPeriod(tax, now);
+
+            // incluir tarifas de préstamos pendientes
+            const loanFeesSum = sumPendingLoanFees(currentUser.userId);
+            const baseAmount = (now < tax.dueDate && !late) ? tax.base : owedInfo.total;
+            const totalToPay = baseAmount + loanFeesSum;
+
+            if (currentUser.balance < totalToPay) {
+                return showAlert('No tienes saldo suficiente para pagar el impuesto y tarifas pendientes', 'error');
+            }
+
+            // Deduct
+            currentUser.balance -= totalToPay;
+            const users = getAllUsers();
+            users[currentUser.userId] = currentUser;
+            saveUsers(users);
+
+            // Registrar pago en tax
+            tax.lastPaidPeriod = periodId;
+            tax.lastPaidAt = Date.now();
+            tax.lastPaidAmount = baseAmount;
+            // preparar siguiente vencimiento
+            tax.dueDate = getNextFirstOfMonth(tax.dueDate);
+            saveUserTax(currentUser.userId, tax);
+
+            // Registrar historial del impuesto
+            const h = getUserHistory(currentUser.userId);
+            h.push({ type: 'out', amount: baseAmount, toUser: 'banco', toName: 'Impuesto DRC', reason: `Pago impuesto ${periodId}`, txId: `tax_${periodId}`, timestamp: Date.now() });
+
+            // Marcar y registrar tarifas de préstamos
+            if (loanFeesSum > 0) {
+                const loans = getUserLoans(currentUser.userId);
+                loans.forEach(l => {
+                    if (!l.feeCharged) {
+                        l.feeCharged = true;
+                        h.push({ type: 'out', amount: l.fee, toUser: 'banco', toName: 'Tarifa crédito', reason: `Tarifa préstamo ${l.loanId}`, txId: `loanfee_${l.loanId}`, timestamp: Date.now() });
+                    }
+                });
+                saveUserLoans(currentUser.userId, loans);
+            }
+
+            saveUserHistory(currentUser.userId, h);
+
+            updateUserDisplay();
+            renderTaxSection();
+            loadHistory();
+
+            showAlert(`✓ Pago realizado: $${totalToPay.toFixed(2)} (impuesto $${baseAmount.toFixed(2)} + tarifas $${loanFeesSum.toFixed(2)})`, 'success');
+        }
+
+        // ==================== PRÉSTAMOS ====================
+        function getUserLoans(userId) {
+            const key = `loans_${userId}`;
+            const stored = localStorage.getItem(key);
+            return stored ? JSON.parse(stored) : [];
+        }
+
+        function saveUserLoans(userId, loans) {
+            const key = `loans_${userId}`;
+            localStorage.setItem(key, JSON.stringify(loans));
+        }
+
+        function addDays(ts, days) {
+            const d = new Date(ts);
+            d.setDate(d.getDate() + days);
+            return d.getTime();
+        }
+
+        function addMonths(ts, months) {
+            const d = new Date(ts);
+            d.setMonth(d.getMonth() + months);
+            return d.getTime();
+        }
+
+        function sumPendingLoanFees(userId) {
+            const loans = getUserLoans(userId);
+            let sum = 0;
+            loans.forEach(l => {
+                if (!l.feeCharged) sum += (l.creditUnits || 0) * 1; // 1 DRC por unidad
+            });
+            return sum;
+        }
+
+        function requestLoan() {
+            if (!currentUser) return showAlert('Debes estar logueado', 'error');
+
+            const amount = parseFloat(document.getElementById('loanAmount').value);
+            const term = document.getElementById('loanTerm').value; // 'monthly' or 'weekly'
+            const installments = parseInt(document.getElementById('loanInstallments').value, 10) || 1;
+
+            if (!amount || amount <= 0) return showAlert('Ingresa un monto válido', 'error');
+            if (installments < 1) return showAlert('Ingresa al menos 1 cuota', 'error');
+
+            // calcular unidades de historial crediticio: 1 unidad por cada 100 DRC (base 100)
+            const creditUnits = Math.max(1, Math.ceil(amount / 100));
+            const fee = creditUnits * 1; // 1 DRC por unidad
+
+            const loans = getUserLoans(currentUser.userId);
+            const loanId = 'loan_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+
+            const installmentAmount = parseFloat((amount / installments).toFixed(2));
+
+            const now = Date.now();
+            const nextInstallmentDate = term === 'monthly' ? getNextFirstOfMonth(now) : addDays(now, 7);
+
+            const loan = {
+                loanId,
+                amount,
+                remaining: amount,
+                term,
+                installmentsTotal: installments,
+                installmentsLeft: installments,
+                installmentAmount,
+                creditUnits,
+                fee,
+                feeCharged: false,
+                createdAt: now,
+                nextInstallmentDate,
+                paid: false
+            };
+
+            loans.push(loan);
+            saveUserLoans(currentUser.userId, loans);
+
+            showAlert(`Préstamo solicitado: $${amount.toFixed(2)}. Se cobrará una tarifa de historial de $${fee.toFixed(2)} junto con el impuesto.`, 'success');
+            renderTaxSection();
+        }
+
+        function renderLoansInTaxSection(container) {
+            // form
+            const form = document.createElement('div');
+            form.style.marginTop = '14px';
+            form.innerHTML = `
+                <div style="font-weight:600; margin-bottom:8px;">Zona de Préstamos</div>
+                <div class="input-group" style="margin-bottom:8px;">
+                    <input id="loanAmount" type="number" min="1" step="0.01" placeholder="Monto a pedir" style="flex:1; padding:8px;">
+                    <select id="loanTerm" style="width:120px; margin-left:8px;">
+                        <option value="monthly">Mensual</option>
+                        <option value="weekly">Semanal</option>
+                    </select>
+                </div>
+                <div class="input-group" style="margin-bottom:8px;">
+                    <input id="loanInstallments" type="number" min="1" step="1" placeholder="Cuotas (p.ej. 3)" style="flex:1; padding:8px;">
+                    <button class="button-primary" style="width:140px; margin-left:8px;" onclick="requestLoan()">Pedir préstamo</button>
+                </div>
+            `;
+            container.appendChild(form);
+
+            // listar préstamos
+            const loans = getUserLoans(currentUser.userId);
+            const list = document.createElement('div');
+            list.style.marginTop = '10px';
+            if (loans.length === 0) {
+                list.innerHTML = '<div style="color:#666; font-size:13px;">No tienes préstamos activos</div>';
+                container.appendChild(list);
+                return;
+            }
+
+            loans.forEach(loan => {
+                const ldiv = document.createElement('div');
+                ldiv.className = 'job-item';
+                let status = loan.paid ? 'Completado' : `${loan.installmentsLeft} cuotas restantes`;
+                ldiv.innerHTML = `
+                    <div style="font-weight:600;">Préstamo $${loan.amount.toFixed(2)}</div>
+                    <div style="font-size:12px; color:#666;">Termino: ${loan.term} · Cuotas: ${loan.installmentsTotal} · ${status}</div>
+                    <div style="margin-top:8px; display:flex; gap:8px;">
+                        <button class="button-secondary" style="flex:1;" onclick="payLoanInstallment('${loan.loanId}')">Pagar cuota $${loan.installmentAmount.toFixed(2)}</button>
+                        <button class="button-secondary" style="flex:1;" onclick="payLoanFeeNow('${loan.loanId}')">Pagar tarifa $${loan.fee.toFixed(2)}</button>
+                    </div>
+                `;
+                container.appendChild(ldiv);
+            });
+        }
+
+        function payLoanFeeNow(loanId) {
+            if (!currentUser) return showAlert('Debes estar logueado', 'error');
+            const loans = getUserLoans(currentUser.userId);
+            const loan = loans.find(l => l.loanId === loanId);
+            if (!loan) return showAlert('Préstamo no encontrado', 'error');
+            if (loan.feeCharged) return showAlert('La tarifa ya fue cobrada', 'info');
+
+            if (currentUser.balance < loan.fee) return showAlert('No tienes saldo para pagar la tarifa', 'error');
+
+            currentUser.balance -= loan.fee;
+            const users = getAllUsers(); users[currentUser.userId] = currentUser; saveUsers(users);
+
+            loan.feeCharged = true;
+            saveUserLoans(currentUser.userId, loans);
+
+            const h = getUserHistory(currentUser.userId);
+            h.push({ type: 'out', amount: loan.fee, toUser: 'banco', toName: 'Tarifa crédito', reason: `Tarifa préstamo ${loan.loanId}`, txId: `loanfee_${loan.loanId}`, timestamp: Date.now() });
+            saveUserHistory(currentUser.userId, h);
+
+            updateUserDisplay(); renderTaxSection(); loadHistory();
+            showAlert('Tarifa de préstamo pagada', 'success');
+        }
+
+        function payLoanInstallment(loanId) {
+            if (!currentUser) return showAlert('Debes estar logueado', 'error');
+            const loans = getUserLoans(currentUser.userId);
+            const loan = loans.find(l => l.loanId === loanId);
+            if (!loan) return showAlert('Préstamo no encontrado', 'error');
+            if (loan.installmentsLeft <= 0) return showAlert('Préstamo ya saldado', 'info');
+
+            const amt = loan.installmentAmount;
+            if (currentUser.balance < amt) return showAlert('No tienes saldo para pagar la cuota', 'error');
+
+            currentUser.balance -= amt;
+            loan.remaining = parseFloat((loan.remaining - amt).toFixed(2));
+            loan.installmentsLeft -= 1;
+            if (loan.installmentsLeft <= 0) {
+                loan.paid = true;
+                loan.nextInstallmentDate = null;
+            } else {
+                // avanzar siguiente fecha
+                loan.nextInstallmentDate = loan.term === 'monthly' ? addMonths(loan.nextInstallmentDate, 1) : addDays(loan.nextInstallmentDate, 7);
+            }
+
+            // guardar
+            const users = getAllUsers(); users[currentUser.userId] = currentUser; saveUsers(users);
+            saveUserLoans(currentUser.userId, loans);
+
+            // historial
+            const h = getUserHistory(currentUser.userId);
+            h.push({ type: 'out', amount: amt, toUser: 'banco', toName: 'Cuota préstamo', reason: `Cuota préstamo ${loan.loanId}`, txId: `loan_inst_${loan.loanId}_${Date.now()}`, timestamp: Date.now() });
+            saveUserHistory(currentUser.userId, h);
+
+            updateUserDisplay(); renderTaxSection(); loadHistory(); loadAcceptedJobs();
+            showAlert(`Cuota pagada: $${amt.toFixed(2)}`, 'success');
+        }
+
+        // Procesar cobro de tarifas pendientes y cuotas vencidas (llamado desde checkAndApplyTaxes)
+        function processLoansForUser(uid, userObj) {
+            const loans = getUserLoans(uid);
+            const now = Date.now();
+            let users = getAllUsers();
+
+            // No cobrar cuotas automáticamente si no hay saldo
+            loans.forEach(loan => {
+                // Cobrar cuotas vencidas automáticamente si la fecha pasó y aún quedan cuotas
+                if (!loan.paid && loan.nextInstallmentDate && now >= loan.nextInstallmentDate && loan.installmentsLeft > 0) {
+                    if (users[uid].balance >= loan.installmentAmount) {
+                        users[uid].balance -= loan.installmentAmount;
+                        loan.remaining = parseFloat((loan.remaining - loan.installmentAmount).toFixed(2));
+                        loan.installmentsLeft -= 1;
+                        loan.nextInstallmentDate = loan.term === 'monthly' ? addMonths(loan.nextInstallmentDate, 1) : addDays(loan.nextInstallmentDate, 7);
+                        if (loan.installmentsLeft <= 0) loan.paid = true;
+
+                        // historial
+                        const h = getUserHistory(uid);
+                        h.push({ type: 'out', amount: loan.installmentAmount, toUser: 'banco', toName: 'Cuota préstamo (auto)', reason: `Cuota préstamo ${loan.loanId}`, txId: `loan_auto_${loan.loanId}_${Date.now()}`, timestamp: Date.now() });
+                        saveUserHistory(uid, h);
+                    }
+                }
+            });
+
+            saveUsers(users);
+            saveUserLoans(uid, loans);
+        }
+
+        // ==================== UTILIDADES DE TRABAJOS (aceptado/cancelar) ====================
+        function isJobAccepted(jobId) {
+            const users = getAllUsers();
+            for (const [userId, user] of Object.entries(users)) {
+                if (user.isBank) continue;
+                const accepted = getAcceptedJobs(userId);
+                if (accepted.find(j => j.jobId === jobId)) return true;
+            }
+            return false;
+        }
+
+        function cancelCreatedJob(jobId) {
+            if (!currentUser) return;
+            const myJobs = getUserJobs(currentUser.userId);
+            const idx = myJobs.findIndex(j => j.jobId === jobId);
+            if (idx === -1) return showAlert('Trabajo no encontrado', 'error');
+
+            // Si ya fue aceptado, no permitir cancelar
+            if (isJobAccepted(jobId)) {
+                return showAlert('No se puede cancelar: alguien ya aceptó este trabajo', 'error');
+            }
+
+            myJobs.splice(idx, 1);
+            saveUserJobs(currentUser.userId, myJobs);
+            loadMyJobs();
+            showAlert('Trabajo cancelado', 'info');
+        }
+
+        function cancelAcceptedJob(jobId) {
+            if (!currentUser) return;
+            const accepted = getAcceptedJobs(currentUser.userId);
+            const idx = accepted.findIndex(j => j.jobId === jobId);
+            if (idx === -1) return showAlert('Trabajo no encontrado en tus aceptados', 'error');
+
+            const job = accepted[idx];
+
+            // Eliminar de aceptados del trabajador
+            accepted.splice(idx, 1);
+            saveAcceptedJobs(currentUser.userId, accepted);
+
+            // Devolver la reserva al creador
+            const users = getAllUsers();
+            const creator = users[job.creator];
+            if (creator) {
+                creator.balance = (creator.balance || 0) + job.amount;
+                users[job.creator] = creator;
+                saveUsers(users);
+
+                // Actualizar trabajos del creador: marcar disponible otra vez
+                const creatorJobs = getUserJobs(job.creator);
+                const cidx = creatorJobs.findIndex(j => j.jobId === job.jobId);
+                if (cidx !== -1) {
+                    creatorJobs[cidx].active = true;
+                    delete creatorJobs[cidx].reservedBy;
+                    creatorJobs[cidx].acceptedByNotified = false;
+                    saveUserJobs(job.creator, creatorJobs);
+                }
+            }
+
+            // Registro en historial del creador (restitución)
+            if (creator) {
+                const creatorHistory = getUserHistory(job.creator);
+                creatorHistory.push({
+                    type: 'in',
+                    amount: job.amount,
+                    fromUser: currentUser.userId,
+                    fromName: currentUser.name,
+                    reason: 'Cancelación de aceptación - fondos devueltos: ' + job.title,
+                    txId: job.jobId,
+                    timestamp: Date.now()
+                });
+                saveUserHistory(job.creator, creatorHistory);
+            }
+
+            loadAcceptedJobs();
+            loadMyJobs();
+            updateUserDisplay();
+            showAlert('Aceptación cancelada y fondos devueltos al creador', 'info');
+        }
+    </script>
+</body>
+</html>
